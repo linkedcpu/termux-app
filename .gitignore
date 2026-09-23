@@ -37,3 +37,18 @@ local.properties
 .swp
 ehthumbs.db
 Thumbs.db
+
+
+# Eclipse / Buildship
+.project
+.classpath
+.settings/
+
+# 其他 Android/Gradle 常规忽略
+build/
+.gradle/
+.idea/
+*.iml
+local.properties
+app/build/
+

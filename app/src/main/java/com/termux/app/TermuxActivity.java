@@ -818,7 +818,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
             // 5. 刷新
             mTerminalView.post(() -> renderTabBar());
-        }, 300);
+        }, 10);
     }
 
     /**
