@@ -236,14 +236,16 @@ afterEvaluate {
 task buildBergamot(type: Exec) {
     group = "bergamot"
     description = "Build bergamot-translator"
-    workingDir file("src/main/cpp/bergamot-translator")
-    commandLine "bash", "build_bergamot.sh"
+ //   workingDir file("src/main/cpp/bergamot-translator")
+    def termuxPrefix = System.getenv("PREFIX")
+            ?: "/data/data/com.termux/files/usr"
+    commandLine "$termuxPrefix/bin/bash","${project.rootDir}/build_bergamot.sh"
 
-    inputs.dir("src/main/cpp/bergamot-translator")
-    outputs.files(
-        "src/main/cpp/bergamot-translator/build/app/bergamot",
-        "src/main/cpp/bergamot-translator/build/app/bergamot.sha256"
-    )
+  //  inputs.dir("src/main/cpp/bergamot-translator")
+ //:w   outputs.files(
+      //  "src/main/cpp/bergamot-translator/build/app/bergamot",
+     //   "src/main/cpp/bergamot-translator/build/app/bergamot.sha256"
+  //  )
 }
 
 // ---------- 2. 拷贝二进制 + hash 到 assets ----------
