@@ -1,0 +1,21 @@
+models:
+  - model.zhen.intgemm.alphas.bin
+vocabs:
+  - vocab.zhen.spm
+  - vocab.zhen.spm
+shortlist:
+  - lex.50.50.zhen.s2t.bin
+  - 50
+  - 50
+beam-size: 1
+normalize: 1.0
+word-penalty: 0
+max-length-break: 128
+mini-batch-words: 1024
+max-length-factor: 2.0
+skip-cost: true
+cpu-threads: 4
+gemm-precision: int8shiftAlphaAll
+workspace: 128
+quiet: true
+quiet-translation: true

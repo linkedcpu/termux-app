@@ -3,13 +3,7 @@ plugins {
 }
 
 ext {
-    // The packageVariant defines the bootstrap variant that will be included in the app APK.
-    // This must be supported by com.termux.shared.termux.TermuxBootstrap.PackageVariant or app will
-    // crash at startup.
-    // Bootstrap of a different variant must not be manually installed by the user after app installation
-    // by replacing $PREFIX since app code is dependant on the variant used to build the APK.
-    // Currently supported values are: [ "apt-android-7" "apt-android-5" ]
-    packageVariant = System.getenv("TERMUX_PACKAGE_VARIANT") ?: "apt-android-7" // Default: "apt-android-7"
+    packageVariant = System.getenv("TERMUX_PACKAGE_VARIANT") ?: "apt-android-7"
 }
 
 android {
@@ -20,7 +14,7 @@ android {
     def appVersionName = System.getenv("TERMUX_APP_VERSION_NAME") ?: ""
     def apkVersionTag = System.getenv("TERMUX_APK_VERSION_TAG") ?: ""
     def splitAPKsForDebugBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS") ?: "1"
-    def splitAPKsForReleaseBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS") ?: "0" // F-Droid does not support split APKs #1904
+    def splitAPKsForReleaseBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS") ?: "0"
 
     dependencies {
         implementation "androidx.annotation:annotation:1.9.0"
@@ -49,7 +43,7 @@ android {
         if (appVersionName) versionName = appVersionName
         validateVersionName(versionName)
 
-        buildConfigField "String", "TERMUX_PACKAGE_VARIANT", "\"" + project.ext.packageVariant + "\"" // Used by TermuxApplication class
+        buildConfigField "String", "TERMUX_PACKAGE_VARIANT", "\"" + project.ext.packageVariant + "\""
 
         manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"
         manifestPlaceholders.TERMUX_APP_NAME = "Termux"
@@ -70,7 +64,7 @@ android {
             abi {
                 enable ((gradle.startParameter.taskNames.any { it.contains("Debug") } && splitAPKsForDebugBuilds == "1") ||
                     (gradle.startParameter.taskNames.any { it.contains("Release") } && splitAPKsForReleaseBuilds == "1"))
-                reset ()
+                reset()
                 include 'x86', 'x86_64', 'armeabi-v7a', 'arm64-v8a'
                 universalApk true
             }
@@ -89,19 +83,17 @@ android {
     buildTypes {
         release {
             minifyEnabled true
-            shrinkResources false // Reproducible builds
+            shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
         }
-
         debug {
             signingConfig signingConfigs.debug
         }
     }
 
     compileOptions {
-        // Flag to enable support for the new language APIs
         coreLibraryDesugaringEnabled true
-
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
@@ -158,15 +150,12 @@ task versionName {
 }
 
 def validateVersionName(String versionName) {
-    // https://semver.org/spec/v2.0.0.html#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
-    // ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$
     if (!java.util.regex.Pattern.matches("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?\$", versionName))
-        throw new GradleException("The versionName '"  + versionName + "' is not a valid version as per semantic version '2.0.0' spec in the format 'major.minor.patch(-prerelease)(+buildmetadata)'. https://semver.org/spec/v2.0.0.html.")
+        throw new GradleException("The versionName '"  + versionName + "' is not a valid semantic version.")
 }
 
 def downloadBootstrap(String arch, String expectedChecksum, String version) {
     def digest = java.security.MessageDigest.getInstance("SHA-256")
-
     def localUrl = "src/main/cpp/bootstrap-" + arch + ".zip"
     def file = new File(projectDir, localUrl)
     if (file.exists()) {
@@ -179,20 +168,17 @@ def downloadBootstrap(String arch, String expectedChecksum, String version) {
         }
         def checksum = new BigInteger(1, digest.digest()).toString(16)
         while (checksum.length() < 64) { checksum = "0" + checksum }
-        if (checksum == expectedChecksum) {
-            return
-        } else {
-            logger.quiet("Deleting old local file with wrong hash: " + localUrl + ": expected: " + expectedChecksum + ", actual: " + checksum)
+        if (checksum == expectedChecksum) return
+        else {
+            logger.quiet("Deleting old local file with wrong hash: " + localUrl)
             file.delete()
         }
     }
 
     def remoteUrl = "https://gh-proxy.org/https://github.com/termux/termux-packages/releases/download/bootstrap-" + version + "/bootstrap-" + arch + ".zip"
     logger.quiet("Downloading " + remoteUrl + " ...")
-
     file.parentFile.mkdirs()
     def out = new BufferedOutputStream(new FileOutputStream(file))
-
     def connection = new URL(remoteUrl).openConnection()
     connection.setInstanceFollowRedirects(true)
     def digestStream = new java.security.DigestInputStream(connection.inputStream, digest)
@@ -242,3 +228,329 @@ afterEvaluate {
     }
 }
 
+
+
+// ==================== Bergamot 完整构建链 ====================
+
+// ---------- 1. 编译二进制 ----------
+task buildBergamot(type: Exec) {
+    group = "bergamot"
+    description = "Build bergamot-translator"
+    workingDir file("src/main/cpp/bergamot-translator")
+    commandLine "bash", "build_bergamot.sh"
+
+    inputs.dir("src/main/cpp/bergamot-translator")
+    outputs.files(
+        "src/main/cpp/bergamot-translator/build/app/bergamot",
+        "src/main/cpp/bergamot-translator/build/app/bergamot.sha256"
+    )
+}
+
+// ---------- 2. 拷贝二进制 + hash 到 assets ----------
+task copyBergamot {
+    group = "bergamot"
+    description = "Copies bergamot binary + sha256 into assets/bergamot/bin/"
+    dependsOn buildBergamot
+
+    doLast {
+        def destDir = file("src/main/assets/bergamot/bin")
+        destDir.mkdirs()
+
+        // 拷 binary
+        def binSrc = file("src/main/cpp/bergamot-translator/build/app/bergamot")
+        if (!binSrc.exists()) {
+            throw new GradleException("bergamot binary not found: ${binSrc}")
+        }
+        def binDest = new File(destDir, "bergamot")
+        binDest.withOutputStream { os ->
+            binSrc.withInputStream { is ->
+                def buf = new byte[8192]; int n
+                while ((n = is.read(buf)) != -1) os.write(buf, 0, n)
+            }
+        }
+        binDest.setExecutable(true, false)
+        println "  ✓ bergamot → assets/bergamot/bin/bergamot (${(binDest.length() / 1024 / 1024).intValue()} MB)"
+
+        // 拷 sha256（带 fallback）
+        def shaSrc = file("src/main/cpp/bergamot-translator/build/app/bergamot.sha256")
+        def shaDest = new File(destDir, "bergamot.sha256")
+        if (shaSrc.exists()) {
+            shaDest.withOutputStream { os ->
+                shaSrc.withInputStream { is ->
+                    def buf = new byte[8192]; int n
+                    while ((n = is.read(buf)) != -1) os.write(buf, 0, n)
+                }
+            }
+            println "  ✓ bergamot.sha256 copied"
+        } else {
+            println "  ⚠ sha256 not found, computing locally..."
+            def digest = java.security.MessageDigest.getInstance("SHA-256")
+            binDest.withInputStream { is ->
+                def buf = new byte[8192]; int n
+                while ((n = is.read(buf)) != -1) digest.update(buf, 0, n)
+            }
+            shaDest.text = digest.digest().collect { String.format("%02x", it) }.join("")
+            println "  ✓ bergamot.sha256 computed locally"
+        }
+    }
+}
+
+// ---------- 3. 下载模型 ----------
+task downloadBergamotModels {
+    description = "Downloads, verifies, gunzips bergamot models into assets/bergamot/models/"
+    group = "bergamot"
+
+    doLast {
+        def modelsRoot = file("src/main/assets/bergamot/models")
+        modelsRoot.mkdirs()
+
+        def cacheDir = file("${buildDir}/bergamot_models_cache")
+        cacheDir.mkdirs()
+        def jsonFile = new File(cacheDir, "models.json")
+        def lockFile = new File(cacheDir, "models.lock")
+
+        // 1. registry
+        if (!jsonFile.exists() || jsonFile.length() < 100) {
+            println "  ↓ downloading models.json ..."
+            new URL("https://storage.googleapis.com/moz-fx-translations-data--303e-prod-translations-data/db/models.json")
+                .withInputStream { is ->
+                    jsonFile.withOutputStream { os ->
+                        def buf = new byte[8192]; int n
+                        while ((n = is.read(buf)) != -1) os.write(buf, 0, n)
+                    }
+                }
+            println "  ✓ models.json (${(jsonFile.length() / 1024).intValue()} KB)"
+        } else {
+            println "  ✓ models.json (cached)"
+        }
+
+        def root = new groovy.json.JsonSlurper().parseText(jsonFile.text)
+        def baseUrl = root.baseUrl?.toString()?.replaceAll('/$', '')
+        def models = root.models
+        if (baseUrl == null || models == null) {
+            throw new GradleException("Invalid registry: missing baseUrl or models")
+        }
+
+        def oldLock = lockFile.exists() ? new groovy.json.JsonSlurper().parseText(lockFile.text) : [:]
+        def targets = ["en-zh": "enzh", "zh-en": "zhen"]
+        def newLock = [:]
+
+        targets.each { registryKey, localDir ->
+            def entries = models.get(registryKey)
+            if (!(entries instanceof List) || entries.isEmpty()) {
+                println "  ⚠ '${registryKey}' not found, skipping"
+                return
+            }
+
+            def selected = entries.find {
+                it.architecture?.contains("memory") && it.releaseStatus?.toString()?.contains("Release")
+            } ?: entries.find {
+                it.architecture == "base" && it.releaseStatus?.toString()?.contains("Release")
+            } ?: entries[0]
+
+            println "  📌 ${registryKey}: using '${selected.architecture}' (status: ${selected.releaseStatus ?: 'none'})"
+
+            def files = selected.files
+            if (!(files instanceof Map)) return
+
+            def pairDir = new File(modelsRoot, localDir)
+            pairDir.mkdirs()
+            newLock[localDir] = [:]
+
+            files.each { fileType, fileInfo ->
+                def path = fileInfo?.path?.toString()
+                if (path == null || path.isEmpty()) return
+
+                def gzFilename = path.replaceAll('.*/', '')
+                def rawFilename = gzFilename.replaceAll(/\.gz$/, '')
+                def fullUrl = "${baseUrl}/${path}"
+                def expectedHash = fileInfo?.uncompressedHash?.toString()
+
+                def target = new File(pairDir, rawFilename)
+                def gzTarget = new File(pairDir, gzFilename)
+                def oldHash = oldLock.get(localDir)?.get(rawFilename)
+
+                // 跳过判断
+                if (target.exists() && target.length() > 0 && oldHash == expectedHash) {
+                    println "  ✓ ${localDir}/${rawFilename} (exists, skip)"
+                    newLock[localDir][rawFilename] = expectedHash
+                    return
+                }
+
+                // 删旧
+                if (target.exists()) target.delete()
+                if (gzTarget.exists()) gzTarget.delete()
+
+                // 下载
+                println "  ↓ ${localDir}/${gzFilename} ..."
+                def success = false
+                for (int attempt = 0; attempt < 3 && !success; attempt++) {
+                    try {
+                        def conn = new URL(fullUrl).openConnection()
+                        conn.setConnectTimeout(15000)
+                        conn.setReadTimeout(60000)
+                        conn.connect()
+                        def code = conn.getResponseCode()
+                        if (code != 200) throw new IOException("HTTP ${code}")
+
+                        def os = new FileOutputStream(gzTarget)
+                        def is = conn.getInputStream()
+                        def buf = new byte[8192]; int n
+                        while ((n = is.read(buf)) != -1) os.write(buf, 0, n)
+                        is.close(); os.close()
+
+                        if (!verifyGzip(gzTarget)) {
+                            gzTarget.delete()
+                            throw new IOException("gzip corrupted")
+                        }
+                        if (expectedHash != null && !verifyUncompressedHash(gzTarget, expectedHash)) {
+                            gzTarget.delete()
+                            throw new IOException("SHA256 mismatch")
+                        }
+                        success = true
+                        println "  ✓ ${localDir}/${gzFilename} downloaded"
+                    } catch (Exception e) {
+                        println "  ✗ attempt ${attempt+1}/3: ${e.message}"
+                        if (attempt == 2) throw new GradleException("Failed: ${gzFilename}", e)
+                        Thread.sleep(3000)
+                    }
+                }
+
+                // 解压
+                println "  ↳ gunzip → ${rawFilename}"
+                new FileOutputStream(target).withStream { fos ->
+                    new java.util.zip.GZIPInputStream(new FileInputStream(gzTarget)).withStream { gis ->
+                        def buf = new byte[8192]; int n
+                        while ((n = gis.read(buf)) != -1) fos.write(buf, 0, n)
+                    }
+                }
+                if (expectedHash != null) {
+                    def actual = sha256(target)
+                    if (actual != expectedHash) {
+                        target.delete(); gzTarget.delete()
+                        throw new GradleException("Hash mismatch after gunzip: ${rawFilename}")
+                    }
+                }
+                gzTarget.delete()
+                newLock[localDir][rawFilename] = expectedHash
+                println "  ✓ ${localDir}/${rawFilename} (${(target.length() / 1024 / 1024).intValue()} MB)"
+            }
+
+            // 生成 yml
+            def yml = ""
+            if (localDir == "enzh") {
+                yml = """models:
+  - model.enzh.intgemm.alphas.bin
+vocabs:
+  - srcvocab.enzh.spm
+  - trgvocab.enzh.spm
+shortlist:
+  - lex.50.50.enzh.s2t.bin
+  - 50
+  - 50
+beam-size: 1
+normalize: 1.0
+word-penalty: 0
+max-length-break: 128
+mini-batch-words: 1024
+max-length-factor: 2.0
+skip-cost: true
+cpu-threads: 4
+gemm-precision: int8shiftAlphaAll
+workspace: 128
+quiet: true
+quiet-translation: true
+"""
+            } else {
+                yml = """models:
+  - model.zhen.intgemm.alphas.bin
+vocabs:
+  - vocab.zhen.spm
+  - vocab.zhen.spm
+shortlist:
+  - lex.50.50.zhen.s2t.bin
+  - 50
+  - 50
+beam-size: 1
+normalize: 1.0
+word-penalty: 0
+max-length-break: 128
+mini-batch-words: 1024
+max-length-factor: 2.0
+skip-cost: true
+cpu-threads: 4
+gemm-precision: int8shiftAlphaAll
+workspace: 128
+quiet: true
+quiet-translation: true
+"""
+            }
+            new File(pairDir, "${localDir}.yml").text = yml
+            println "  ✓ ${localDir}/${localDir}.yml generated"
+        }
+
+        // 写 lock
+        lockFile.text = groovy.json.JsonOutput.prettyPrint(
+            groovy.json.JsonOutput.toJson(newLock)
+        )
+        println "✓ models.lock updated"
+        println "✓ Done. Models ready in assets/bergamot/models/"
+    }
+}
+
+// ---------- 4. 工具函数 ----------
+def verifyGzip(File f) {
+    if (f.length() < 18) return false
+    try {
+        def fis = new FileInputStream(f)
+        def gis = new java.util.zip.GZIPInputStream(fis)
+        def buf = new byte[8192]
+        while (gis.read(buf) != -1) {}
+        gis.close(); fis.close()
+        return true
+    } catch (Exception e) { return false }
+}
+
+def verifyUncompressedHash(File gzFile, String expectedHash) {
+    if (expectedHash == null || expectedHash.isEmpty()) return true
+    try {
+        def digest = java.security.MessageDigest.getInstance("SHA-256")
+        def fis = new FileInputStream(gzFile)
+        def gis = new java.util.zip.GZIPInputStream(fis)
+        def buf = new byte[8192]; int n
+        while ((n = gis.read(buf)) != -1) digest.update(buf, 0, n)
+        gis.close(); fis.close()
+        def actual = digest.digest().collect { String.format("%02x", it) }.join("")
+        return actual.equals(expectedHash)
+    } catch (Exception e) { return false }
+}
+
+def sha256(File f) {
+    def d = java.security.MessageDigest.getInstance("SHA-256")
+    f.withInputStream { is ->
+        def buf = new byte[8192]; int n
+        while ((n = is.read(buf)) != -1) d.update(buf, 0, n)
+    }
+    return d.digest().collect { String.format("%02x", it) }.join("")
+}
+
+// ---------- 5. 依赖链（核心修复：只这一段，干净利落）----------
+afterEvaluate {
+    android.applicationVariants.all { variant ->
+        def mergeTask = tasks.findByName("merge${variant.name.capitalize()}Assets")
+        if (mergeTask != null) {
+            mergeTask.dependsOn copyBergamot
+            mergeTask.dependsOn downloadBergamotModels
+        }
+    }
+}
+
+// ---------- 6. 清理 ----------
+task cleanBergamot {
+    description = "Removes all bergamot assets (bin + models) and cache"
+    doLast {
+        delete file("src/main/assets/bergamot")
+        delete file("${buildDir}/bergamot_models_cache")
+        println "✓ assets/bergamot/ + cache cleared"
+    }
+}
