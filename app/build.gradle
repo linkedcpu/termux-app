@@ -239,7 +239,7 @@ task buildBergamot(type: Exec) {
  //   workingDir file("src/main/cpp/bergamot-translator")
     def termuxPrefix = System.getenv("PREFIX")
             ?: "/data/data/com.termux/files/usr"
-    commandLine "$termuxPrefix/bin/bash","${project.rootDir}/build_bergamot.sh"
+    commandLine "$termuxPrefix/bin/bash","${project.rootDir}/3rd-party/bergamot-translator/termux_build_bergamot.sh"
 
   //  inputs.dir("src/main/cpp/bergamot-translator")
  //:w   outputs.files(
@@ -259,7 +259,7 @@ task copyBergamot {
         destDir.mkdirs()
 
         // 拷 binary
-        def binSrc = file("src/main/cpp/bergamot-translator/build/app/bergamot")
+        def binSrc = file("../3rd-party/bergamot-translator/build/app/bergamot")
         if (!binSrc.exists()) {
             throw new GradleException("bergamot binary not found: ${binSrc}")
         }
@@ -274,7 +274,7 @@ task copyBergamot {
         println "  ✓ bergamot → assets/bergamot/bin/bergamot (${(binDest.length() / 1024 / 1024).intValue()} MB)"
 
         // 拷 sha256（带 fallback）
-        def shaSrc = file("src/main/cpp/bergamot-translator/build/app/bergamot.sha256")
+        def shaSrc = file("../3rd-party/bergamot-translator/build/app/bergamot.sha256")
         def shaDest = new File(destDir, "bergamot.sha256")
         if (shaSrc.exists()) {
             shaDest.withOutputStream { os ->
