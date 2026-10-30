@@ -1,3 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+<!-- TabBar -->
+<color name="tab_bar_background">#111111</color>
+<color name="tab_active_bg">#1F6FEB</color>
+<color name="tab_inactive_bg">#222222</color>
+<color name="tab_active_text">#FFFFFF</color>
+<color name="tab_inactive_text">#BFBFBF</color>
+<color name="tab_close_normal">#BFBFBF</color>
+<color name="tab_close_press">#FF5252</color>
+<color name="tab_add_text">#BFBFBF</color>
+
 </resources>

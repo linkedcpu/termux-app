@@ -9,7 +9,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -68,10 +67,11 @@ import com.termux.view.TerminalViewClient;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.viewpager.widget.ViewPager;
 
-import java.util.Arrays;
+import java.util.List;
 
 /**
  * A terminal emulator activity.
@@ -98,9 +98,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private int mNavBarHeight;
     private float mTerminalToolbarDefaultHeight;
 
-    /* ========== TabBar（新增） ========== */
+    /* ========== TabBar ========== */
     private HorizontalScrollView mTabScrollView;
     private LinearLayout mTabContainer;
+    private View mTabBarRoot;
+    private TextView mTabAddButton;
 
     private static final int CONTEXT_MENU_SELECT_URL_ID = 0;
     private static final int CONTEXT_MENU_SHARE_TRANSCRIPT_ID = 1;
@@ -137,9 +139,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setContentView(R.layout.activity_termux);
 
-        /* ========== TabBar: 绑定（新增） ========== */
+        /* ========== TabBar: 绑定 ========== */
         mTabScrollView = findViewById(R.id.tab_scroll_view);
         mTabContainer = findViewById(R.id.tab_container);
+        mTabBarRoot = findViewById(R.id.tab_bar_root);
+        mTabAddButton = findViewById(R.id.tab_add_button);
 
         mPreferences = TermuxAppSharedPreferences.build(this, true);
         if (mPreferences == null) {
@@ -169,6 +173,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setSettingsButtonView();
         setNewSessionButtonView();
         setToggleKeyboardView();
+        setupTabAddButton();
 
         registerForContextMenu(mTerminalView);
         FileReceiverActivity.updateFileReceiverActivityComponentsState(this);
@@ -190,7 +195,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         TermuxUtils.sendTermuxOpenedBroadcast(this);
 
-        /* ========== TabBar: 初始渲染（新增） ========== */
         renderTabBar();
     }
 
@@ -215,7 +219,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.onResume();
         TermuxCrashUtils.notifyAppCrashFromCrashLogFile(this, LOG_TAG);
         mIsOnResumeAfterOnCreate = false;
-        /* ========== TabBar: resume时刷新（新增） ========== */
         renderTabBar();
     }
 
@@ -286,7 +289,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
 
         mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
-        /* ========== TabBar: service连上后刷新（新增） ========== */
         renderTabBar();
     }
 
@@ -385,9 +387,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     private void setSettingsButtonView() {
         ImageButton settingsButton = findViewById(R.id.settings_button);
-        settingsButton.setOnClickListener(v -> {
-            ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
-        });
+        settingsButton.setOnClickListener(v ->
+            ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class)));
     }
 
     private void setNewSessionButtonView() {
@@ -409,6 +410,30 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         });
         findViewById(R.id.toggle_keyboard_button).setOnLongClickListener(v -> {
             toggleTerminalToolbar();
+            return true;
+        });
+    }
+
+    /* ========== 固定在最右侧的 ＋ 按钮（不触发任何滚动） ========== */
+    private void setupTabAddButton() {
+        if (mTabAddButton == null) return;
+        // 颜色统一走资源
+        mTabAddButton.setTextColor(ContextCompat.getColor(this, R.color.tab_add_text));
+
+        mTabAddButton.setOnClickListener(v -> {
+            if (mTermuxTerminalSessionActivityClient != null)
+                mTermuxTerminalSessionActivityClient.addNewSession(false, null);
+        });
+        mTabAddButton.setOnLongClickListener(v -> {
+            TextInputDialogUtils.textInput(TermuxActivity.this,
+                R.string.title_create_named_session, null,
+                R.string.action_create_named_session_confirm,
+                text -> { if (mTermuxTerminalSessionActivityClient != null)
+                    mTermuxTerminalSessionActivityClient.addNewSession(false, text); },
+                R.string.action_new_session_failsafe,
+                text -> { if (mTermuxTerminalSessionActivityClient != null)
+                    mTermuxTerminalSessionActivityClient.addNewSession(true, text); },
+                -1, null, null);
             return true;
         });
     }
@@ -648,6 +673,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         FileReceiverActivity.updateFileReceiverActivityComponentsState(this);
         if (mTermuxTerminalSessionActivityClient != null) mTermuxTerminalSessionActivityClient.onReloadActivityStyling();
         if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.onReloadActivityStyling();
+        applyTabBarTheme();   // ★ 换主题时重取资源色
         if (recreateActivity) { Logger.logDebug(LOG_TAG, "Recreating activity"); TermuxActivity.this.recreate(); }
     }
 
@@ -661,21 +687,50 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         return intent;
     }
 
-    /* ======================== */
-    /* ========== TabBar ========== */
-    /* ======================== */
+    /* ========================================================= */
+    /* ==================== TabBar ============================ */
+    /* ========================================================= */
+
+    /** 主题/夜间模式切换时，从资源重新取色（不触发滚动） */
+    private void applyTabBarTheme() {
+        if (mTabBarRoot == null) return;
+        mTabBarRoot.setBackgroundColor(
+                ContextCompat.getColor(this, R.color.tab_bar_background));
+        if (mTabAddButton != null)
+            mTabAddButton.setTextColor(
+                ContextCompat.getColor(this, R.color.tab_add_text));
+    }
 
     public void renderTabBar() {
-        if (mTabContainer == null) return;
+        if (mTabContainer == null || mTabBarRoot == null) return;
         TermuxService service = getTermuxService();
         if (service == null) return;
 
-        mTabContainer.removeAllViews();
-        java.util.List<com.termux.shared.termux.shell.command.runner.terminal.TermuxSession> sessions =
+        List<com.termux.shared.termux.shell.command.runner.terminal.TermuxSession> sessions =
                 service.getTermuxSessions();
+
+        /* 空态：整条隐藏 */
+        if (sessions.isEmpty()) {
+            mTabBarRoot.setVisibility(View.GONE);
+            return;
+        }
+        mTabBarRoot.setVisibility(View.VISIBLE);
+        mTabBarRoot.setBackgroundColor(
+                ContextCompat.getColor(this, R.color.tab_bar_background));
+
+        mTabContainer.removeAllViews();
         TerminalSession current = getCurrentSession();
 
-        int tabHeight = (int) (36 * getResources().getDisplayMetrics().density);
+        int d = (int) getResources().getDisplayMetrics().density;
+        int tabHeight = 36 * d;
+        int padH = 12 * d, padV = 4 * d, gap = 2 * d;
+
+        int activeBg   = ContextCompat.getColor(this, R.color.tab_active_bg);
+        int inactiveBg = ContextCompat.getColor(this, R.color.tab_inactive_bg);
+        int activeText  = ContextCompat.getColor(this, R.color.tab_active_text);
+        int inactiveText= ContextCompat.getColor(this, R.color.tab_inactive_text);
+        int closeNormal = ContextCompat.getColor(this, R.color.tab_close_normal);
+        int closePress  = ContextCompat.getColor(this, R.color.tab_close_press);
 
         for (int i = 0; i < sessions.size(); i++) {
             com.termux.shared.termux.shell.command.runner.terminal.TermuxSession ts = sessions.get(i);
@@ -683,71 +738,49 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             if (s == null) continue;
 
             final TerminalSession clickSession = s;
+            final boolean isActive = (current != null && current == s);
 
-            // Tab 容器
             LinearLayout tabLayout = new LinearLayout(this);
             tabLayout.setOrientation(LinearLayout.HORIZONTAL);
             tabLayout.setGravity(Gravity.CENTER_VERTICAL);
-            int padH = (int) (12 * getResources().getDisplayMetrics().density);
-            int padV = (int) (4 * getResources().getDisplayMetrics().density);
-            tabLayout.setPadding(padH, padV, (int)(6 * getResources().getDisplayMetrics().density), padV);
+            tabLayout.setPadding(padH, padV, 6 * d, padV);
+            tabLayout.setBackgroundColor(isActive ? activeBg : inactiveBg);
 
-            if (current != null && current == s) {
-                tabLayout.setBackgroundColor(Color.parseColor("#1F6FEB"));
-            } else {
-                tabLayout.setBackgroundColor(Color.parseColor("#222222"));
-            }
-
-            // 会话名
             TextView tabText = new TextView(this);
             tabText.setText(s.mSessionName != null ? s.mSessionName : "Session " + (i + 1));
-            tabText.setTextColor(Color.WHITE);
+            tabText.setTextColor(isActive ? activeText : inactiveText);
             tabText.setTextSize(12);
             tabText.setSingleLine(true);
             tabText.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            tabText.setPadding(0, 0, (int)(10 * getResources().getDisplayMetrics().density), 0);
+            tabText.setPadding(0, 0, 10 * d, 0);
 
-            // 单击切换
+            /* 只切换 + 高亮，不滚 */
             tabText.setOnClickListener(v -> {
                 if (mTermuxTerminalSessionActivityClient != null) {
                     mTermuxTerminalSessionActivityClient.setCurrentSession(clickSession);
+                    renderTabBar();
                 }
-                renderTabBar();
             });
+            tabText.setOnLongClickListener(v -> { renameSession(clickSession); return true; });
 
-            // 长按重命名
-            tabText.setOnLongClickListener(v -> {
-                renameSession(clickSession);
-                return true;
-            });
-
-            // × 关闭按钮
             TextView closeBtn = new TextView(this);
             closeBtn.setText("×");
-            closeBtn.setTextColor(Color.LTGRAY);
+            closeBtn.setTextColor(closeNormal);
             closeBtn.setTextSize(16);
-            int btnPad = (int)(6 * getResources().getDisplayMetrics().density);
-            closeBtn.setPadding(btnPad, 0, btnPad, 0);
-            closeBtn.setOnClickListener(v -> {
-                closeSession(clickSession);
-            });
-
-            // 关闭按钮按下变红
+            closeBtn.setPadding(6 * d, 0, 6 * d, 0);
+            closeBtn.setClickable(true);
+            closeBtn.setFocusable(true);
+            closeBtn.setOnClickListener(v -> closeSession(clickSession));
             closeBtn.setOnTouchListener((v, event) -> {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        closeBtn.setTextColor(Color.RED);
-                        break;
+                        closeBtn.setTextColor(closePress); break;
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
-                        closeBtn.setTextColor(Color.LTGRAY);
-                        break;
+                        closeBtn.setTextColor(closeNormal); break;
                 }
-                return false;
+                return false;   // 仍让 onClick 正常触发
             });
-
-            closeBtn.setClickable(true);
-            closeBtn.setFocusable(true);
 
             LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
                     0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
@@ -755,30 +788,16 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             tabLayout.addView(closeBtn);
 
             LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            tabParams.setMargins((int)(1 * getResources().getDisplayMetrics().density), 0,
-                    (int)(1 * getResources().getDisplayMetrics().density), 0);
+                    LinearLayout.LayoutParams.WRAP_CONTENT, tabHeight);
+            tabParams.setMargins(gap, 0, gap, 0);
             mTabContainer.addView(tabLayout, tabParams);
         }
-
-        // ＋ 新建按钮
-        TextView addTab = new TextView(this);
-        addTab.setText(" ＋ ");
-        int addPadH = (int)(16 * getResources().getDisplayMetrics().density);
-        int addPadV = (int)(0 * getResources().getDisplayMetrics().density);
-        addTab.setPadding(addPadH, addPadV, addPadH, addPadV);
-        addTab.setTextColor(Color.LTGRAY);
-        addTab.setTextSize(16);
-        addTab.setOnClickListener(v -> {
-            if (mTermuxTerminalSessionActivityClient != null) {
-                mTermuxTerminalSessionActivityClient.addNewSession(false, null);
-            }
-        });
-        mTabContainer.addView(addTab);
+        /* ★ 不调用任何滚动逻辑，条保持当前位置不动 */
     }
 
     /**
-     * 关闭 session：走 Termux 正常退出流程 → 自动按回车 → Tab 消失
+     * 关闭 session：原版逻辑，一字未改。
+     * 走 Termux 正常退出流程 → 自动按回车 → Tab 消失
      */
     private void closeSession(TerminalSession session) {
         if (session == null) return;
@@ -822,7 +841,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     /**
-     * 重命名 session
+     * 重命名 session（原版）
      */
     private void renameSession(TerminalSession session) {
         if (session == null) return;
