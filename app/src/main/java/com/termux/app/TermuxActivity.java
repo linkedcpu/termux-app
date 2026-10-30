@@ -13,6 +13,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.Gravity;
@@ -21,6 +22,7 @@ import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
@@ -28,8 +30,12 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.RelativeLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.content.ClipboardManager;
+import android.content.ClipData;
+import android.view.inputmethod.InputMethodManager;
 
 import com.termux.R;
 import com.termux.app.api.file.FileReceiverActivity;
@@ -39,7 +45,6 @@ import com.termux.app.terminal.io.TermuxTerminalExtraKeys;
 import com.termux.shared.activities.ReportActivity;
 import com.termux.shared.activity.ActivityUtils;
 import com.termux.shared.activity.media.AppCompatActivityUtils;
-import com.termux.shared.data.IntentUtils;
 import com.termux.shared.android.PermissionUtils;
 import com.termux.shared.data.DataUtils;
 import com.termux.shared.termux.TermuxConstants;
@@ -60,9 +65,10 @@ import com.termux.shared.termux.theme.TermuxThemeUtils;
 import com.termux.shared.theme.NightMode;
 import com.termux.shared.view.ViewUtils;
 import com.termux.terminal.TerminalSession;
-import com.termux.terminal.TerminalSessionClient;
 import com.termux.view.TerminalView;
-import com.termux.view.TerminalViewClient;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -71,10 +77,18 @@ import androidx.core.content.ContextCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.viewpager.widget.ViewPager;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * A terminal emulator activity.
+ * 底部栏右侧：＋ 新建 / ☆ 收藏夹 / ⚙ 设置(弹长按菜单)
+ *   ☆ 收藏夹界面：深色卡片 + 圆角 + 等宽命令 + 搜索过滤 + 条数徽标
+ *   收藏夹路径：~/.termux/snippets.json
+ *     (= /data/data/<包名>/files/home/.termux/snippets.json)
  */
 public final class TermuxActivity extends AppCompatActivity implements ServiceConnection {
 
@@ -98,12 +112,16 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private int mNavBarHeight;
     private float mTerminalToolbarDefaultHeight;
 
-    /* ========== TabBar ========== */
-    private HorizontalScrollView mTabScrollView;
+    /* ========== 底部栏 ========== */
+    private View         mTabBarRoot;
     private LinearLayout mTabContainer;
-    private View mTabBarRoot;
-    private TextView mTabAddButton;
+    private TextView     mTabAddButton;
 
+    private boolean mTabBarVisible = true;
+    private int     mTabBarOriginalHeight;
+
+    private static final int CONTEXT_MENU_TOGGLE_EXTRA_KEYS_ID = 12;
+    private static final int CONTEXT_MENU_TOGGLE_TAB_BAR_ID    = 13;
     private static final int CONTEXT_MENU_SELECT_URL_ID = 0;
     private static final int CONTEXT_MENU_SHARE_TRANSCRIPT_ID = 1;
     private static final int CONTEXT_MENU_SHARE_SELECTED_TEXT = 10;
@@ -119,8 +137,25 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     private static final String ARG_TERMINAL_TOOLBAR_TEXT_INPUT = "terminal_toolbar_text_input";
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
-
     private static final String LOG_TAG = "TermuxActivity";
+
+    /* ==================== 命令收藏夹 ==================== */
+    private static final String SNIPPETS_FILE = "snippets.json";
+    private final List<Snippet> mSnippets = new ArrayList<>();
+    private AlertDialog mSnippetSheet;
+
+    static class Snippet {
+        final String name;
+        final String cmd;
+        Snippet(String n, String c) { name = n; cmd = c; }
+        JSONObject toJson() throws org.json.JSONException {
+            JSONObject o = new JSONObject(); o.put("name", name); o.put("cmd", cmd); return o;
+        }
+        static Snippet fromJson(JSONObject o) throws org.json.JSONException {
+            return new Snippet(o.getString("name"), o.getString("cmd"));
+        }
+    }
+    /* ==================================================== */
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -136,13 +171,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setActivityTheme();
 
         super.onCreate(savedInstanceState);
-
         setContentView(R.layout.activity_termux);
 
-        /* ========== TabBar: 绑定 ========== */
-        mTabScrollView = findViewById(R.id.tab_scroll_view);
+        mTabBarRoot   = findViewById(R.id.tab_bar_root);
         mTabContainer = findViewById(R.id.tab_container);
-        mTabBarRoot = findViewById(R.id.tab_bar_root);
         mTabAddButton = findViewById(R.id.tab_add_button);
 
         mPreferences = TermuxAppSharedPreferences.build(this, true);
@@ -174,6 +206,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setNewSessionButtonView();
         setToggleKeyboardView();
         setupTabAddButton();
+        setupDrawerButtons();
+        mTabBarRoot.post(this::initTabBarHeight);
+
+        loadSnippets();
 
         registerForContextMenu(mTerminalView);
         FileReceiverActivity.updateFileReceiverActivityComponentsState(this);
@@ -194,7 +230,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
 
         TermuxUtils.sendTermuxOpenedBroadcast(this);
-
         renderTabBar();
     }
 
@@ -219,7 +254,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.onResume();
         TermuxCrashUtils.notifyAppCrashFromCrashLogFile(this, LOG_TAG);
         mIsOnResumeAfterOnCreate = false;
+        ensureTabBarVisible();
         renderTabBar();
+        loadSnippets();   // ★ 从终端切回来也重载收藏夹
     }
 
     @Override
@@ -233,6 +270,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         removeTermuxActivityRootViewGlobalLayoutListener();
         unregisterTermuxActivityBroadcastReceiver();
         getDrawer().closeDrawers();
+        saveSnippets();
     }
 
     @Override
@@ -245,6 +283,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             mTermuxService = null;
         }
         try { unbindService(this); } catch (Exception e) {}
+        dismissSnippetSheet();
     }
 
     @Override
@@ -289,6 +328,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
 
         mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
+        ensureTabBarVisible();
         renderTabBar();
     }
 
@@ -365,15 +405,21 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         terminalToolbarViewPager.setLayoutParams(layoutParams);
     }
 
-    public void toggleTerminalToolbar() {
+    public boolean toggleTerminalToolbar() {
         final ViewPager terminalToolbarViewPager = getTerminalToolbarViewPager();
-        if (terminalToolbarViewPager == null) return;
+        if (terminalToolbarViewPager == null) return false;
         final boolean showNow = mPreferences.toogleShowTerminalToolbar();
         Logger.showToast(this, (showNow ? getString(R.string.msg_enabling_terminal_toolbar) : getString(R.string.msg_disabling_terminal_toolbar)), true);
         terminalToolbarViewPager.setVisibility(showNow ? View.VISIBLE : View.GONE);
         if (showNow && isTerminalToolbarTextInputViewSelected()) {
             findViewById(R.id.terminal_toolbar_text_input).requestFocus();
         }
+        return showNow;
+    }
+
+    private boolean isTerminalToolbarShowing() {
+        final ViewPager vp = getTerminalToolbarViewPager();
+        return vp != null && vp.getVisibility() == View.VISIBLE;
     }
 
     private void saveTerminalToolbarTextInput(Bundle savedInstanceState) {
@@ -387,13 +433,16 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     private void setSettingsButtonView() {
         ImageButton settingsButton = findViewById(R.id.settings_button);
+        if (settingsButton == null) return;
         settingsButton.setOnClickListener(v ->
             ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class)));
     }
 
     private void setNewSessionButtonView() {
         View newSessionButton = findViewById(R.id.new_session_button);
-        newSessionButton.setOnClickListener(v -> mTermuxTerminalSessionActivityClient.addNewSession(false, null));
+        if (newSessionButton == null) return;
+        newSessionButton.setOnClickListener(v ->
+            mTermuxTerminalSessionActivityClient.addNewSession(false, null));
         newSessionButton.setOnLongClickListener(v -> {
             TextInputDialogUtils.textInput(TermuxActivity.this, R.string.title_create_named_session, null,
                 R.string.action_create_named_session_confirm, text -> mTermuxTerminalSessionActivityClient.addNewSession(false, text),
@@ -404,27 +453,46 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private void setToggleKeyboardView() {
-        findViewById(R.id.toggle_keyboard_button).setOnClickListener(v -> {
+        View kb = findViewById(R.id.toggle_keyboard_button);
+        if (kb == null) return;
+        kb.setOnClickListener(v -> {
             mTermuxTerminalViewClient.onToggleSoftKeyboardRequest();
             getDrawer().closeDrawers();
         });
-        findViewById(R.id.toggle_keyboard_button).setOnLongClickListener(v -> {
-            toggleTerminalToolbar();
-            return true;
+    }
+
+    /* ========================================================= */
+    /* ========== 底部栏的 ☆ 收藏夹 / ⚙ 设置 =============== */
+    /* ========================================================= */
+
+    private void setupDrawerButtons() {
+        View snippetBtn = findViewById(R.id.snippet_button);
+        if (snippetBtn != null) snippetBtn.setOnClickListener(v -> showSnippetSheet());
+
+        View menuBtn = findViewById(R.id.drawer_menu_button);
+        if (menuBtn != null) menuBtn.setOnClickListener(v -> {
+            getDrawer().closeDrawers();
+            if (getCurrentSession() == null) {
+                Toast.makeText(this, "还没有会话", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            mTerminalView.post(() -> openContextMenu(mTerminalView));
         });
     }
 
-    /* ========== 固定在最右侧的 ＋ 按钮（不触发任何滚动） ========== */
+    /* ========================================================= */
+    /* ================ 底部栏：Session 标签 ================== */
+    /* ========================================================= */
+
     private void setupTabAddButton() {
         if (mTabAddButton == null) return;
-        // 颜色统一走资源
-        mTabAddButton.setTextColor(ContextCompat.getColor(this, R.color.tab_add_text));
-
         mTabAddButton.setOnClickListener(v -> {
+            ensureTabBarVisible();
             if (mTermuxTerminalSessionActivityClient != null)
                 mTermuxTerminalSessionActivityClient.addNewSession(false, null);
         });
         mTabAddButton.setOnLongClickListener(v -> {
+            ensureTabBarVisible();
             TextInputDialogUtils.textInput(TermuxActivity.this,
                 R.string.title_create_named_session, null,
                 R.string.action_create_named_session_confirm,
@@ -438,33 +506,174 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         });
     }
 
-    @SuppressLint("RtlHardcoded")
-    @Override
-    public void onBackPressed() {
-        if (getDrawer().isDrawerOpen(Gravity.LEFT)) {
-            getDrawer().closeDrawers();
-        } else {
-            finishActivityIfNotFinishing();
+    private void initTabBarHeight() {
+        if (mTabBarRoot == null) return;
+        int h = mTabBarRoot.getHeight();
+        if (h <= 0) h = (int) (36 * getResources().getDisplayMetrics().density);
+        mTabBarOriginalHeight = h;
+        applyTabBarVisibility();
+    }
+
+    public void renderTabBar() {
+        if (mTabContainer == null || mTabBarRoot == null) return;
+        TermuxService service = getTermuxService();
+        if (service == null) return;
+        List<com.termux.shared.termux.shell.command.runner.terminal.TermuxSession> sessions =
+                service.getTermuxSessions();
+
+        applyTabBarVisibility();
+        if (sessions.isEmpty()) return;
+
+        mTabBarRoot.setBackgroundColor(ContextCompat.getColor(this, R.color.tab_bar_background));
+        mTabContainer.removeAllViews();
+        TerminalSession current = getCurrentSession();
+
+        int d = (int) getResources().getDisplayMetrics().density;
+        int tabHeight = 36 * d, padH = 12 * d, padV = 4 * d, gap = 2 * d;
+        int activeBg    = ContextCompat.getColor(this, R.color.tab_active_bg);
+        int inactiveBg  = ContextCompat.getColor(this, R.color.tab_inactive_bg);
+        int activeText  = ContextCompat.getColor(this, R.color.tab_active_text);
+        int inactiveText= ContextCompat.getColor(this, R.color.tab_inactive_text);
+        int closeNormal = ContextCompat.getColor(this, R.color.tab_close_normal);
+        int closePress  = ContextCompat.getColor(this, R.color.tab_close_press);
+
+        for (int i = 0; i < sessions.size(); i++) {
+            com.termux.shared.termux.shell.command.runner.terminal.TermuxSession ts = sessions.get(i);
+            TerminalSession s = ts.getTerminalSession();
+            if (s == null) continue;
+            final TerminalSession click = s;
+            final boolean isActive = (current != null && current == s);
+
+            LinearLayout tab = new LinearLayout(this);
+            tab.setOrientation(LinearLayout.HORIZONTAL);
+            tab.setGravity(Gravity.CENTER_VERTICAL);
+            tab.setPadding(padH, padV, 6 * d, padV);
+            tab.setBackgroundColor(isActive ? activeBg : inactiveBg);
+
+            TextView txt = new TextView(this);
+            txt.setText(s.mSessionName != null ? s.mSessionName : "Session " + (i + 1));
+            txt.setTextColor(isActive ? activeText : inactiveText);
+            txt.setTextSize(12);
+            txt.setSingleLine(true);
+            txt.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            txt.setPadding(0, 0, 10 * d, 0);
+            txt.setOnClickListener(v -> {
+                if (mTermuxTerminalSessionActivityClient != null) {
+                    mTermuxTerminalSessionActivityClient.setCurrentSession(click);
+                    renderTabBar();
+                    ensureTabBarVisible();
+                }
+            });
+            txt.setOnLongClickListener(v -> { renameSession(click); return true; });
+
+            TextView x = new TextView(this);
+            x.setText("×");
+            x.setTextColor(closeNormal);
+            x.setTextSize(16);
+            x.setPadding(6 * d, 0, 6 * d, 0);
+            x.setClickable(true);
+            x.setFocusable(true);
+            x.setOnClickListener(v -> closeSession(click));
+            x.setOnTouchListener((v, e) -> {
+                switch (e.getAction()) {
+                    case MotionEvent.ACTION_DOWN: x.setTextColor(closePress); break;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL: x.setTextColor(closeNormal); break;
+                }
+                return false;
+            });
+
+            tab.addView(txt, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+            tab.addView(x);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, tabHeight);
+            lp.setMargins(gap, 0, gap, 0);
+            mTabContainer.addView(tab, lp);
         }
     }
 
-    public void finishActivityIfNotFinishing() {
-        if (!TermuxActivity.this.isFinishing()) { finish(); }
+    private void closeSession(TerminalSession session) {
+        if (session == null) return;
+        TermuxService service = getTermuxService();
+        if (service == null) return;
+        int index = service.getIndexOfSession(session);
+        session.finishIfRunning();
+        mTerminalView.postDelayed(() -> {
+            session.write("\n");
+            service.removeTermuxSession(session);
+            int newSize = service.getTermuxSessionsSize();
+            if (newSize == 0) {
+                finishActivityIfNotFinishing();
+            } else {
+                int newIndex = Math.max(0, Math.min(index, newSize - 1));
+                com.termux.shared.termux.shell.command.runner.terminal.TermuxSession next =
+                        service.getTermuxSession(newIndex);
+                if (next != null && next.getTerminalSession() != null) {
+                    mTerminalView.attachSession(next.getTerminalSession());
+                    if (mTermuxTerminalSessionActivityClient != null)
+                        mTermuxTerminalSessionActivityClient.setCurrentSession(next.getTerminalSession());
+                }
+            }
+            mTerminalView.post(() -> { ensureTabBarVisible(); renderTabBar(); });
+        }, 10);
     }
 
-    public void showToast(String text, boolean longDuration) {
-        if (text == null || text.isEmpty()) return;
-        if (mLastToast != null) mLastToast.cancel();
-        mLastToast = Toast.makeText(TermuxActivity.this, text, longDuration ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT);
-        mLastToast.setGravity(Gravity.TOP, 0, 0);
-        mLastToast.show();
+    private void renameSession(TerminalSession session) {
+        if (session == null) return;
+        EditText input = new EditText(this);
+        input.setText(session.mSessionName);
+        input.setSingleLine(true);
+        new AlertDialog.Builder(this)
+            .setTitle("重命名会话")
+            .setView(input)
+            .setPositiveButton("确定", (d, w) -> {
+                String name = input.getText().toString().trim();
+                if (!name.isEmpty()) { session.mSessionName = name; renderTabBar(); }
+            })
+            .setNegativeButton("取消", null)
+            .show();
     }
+
+    /* ========================================================= */
+    /* ========== Session 栏显隐（菜单里那条） =============== */
+    /* ========================================================= */
+
+    private void toggleTabBarFromMenu() {
+        mTabBarVisible = !mTabBarVisible;
+        if (mTabBarVisible) renderTabBar();
+        else applyTabBarVisibility();
+        Logger.showToast(this, "Session 栏：" + (mTabBarVisible ? "显示" : "隐藏"), false);
+    }
+
+    private void applyTabBarVisibility() {
+        if (mTabBarRoot == null || mTabBarOriginalHeight == 0) return;
+        TermuxService service = getTermuxService();
+        boolean hasSessions = service != null && !service.getTermuxSessions().isEmpty();
+        mTabBarRoot.setVisibility(hasSessions ? View.VISIBLE : View.GONE);
+        ViewGroup.LayoutParams lp = mTabBarRoot.getLayoutParams();
+        lp.height = mTabBarVisible ? mTabBarOriginalHeight : 0;
+        mTabBarRoot.setLayoutParams(lp);
+    }
+
+    public void ensureTabBarVisible() {
+        if (mTabBarRoot == null) return;
+        if (!mTabBarVisible) {
+            mTabBarVisible = true;
+            applyTabBarVisibility();
+            renderTabBar();
+        }
+    }
+
+    /* ========================================================= */
+    /* ================ 长按菜单（官方入口） ================== */
+    /* ========================================================= */
 
     @Override
     public void onCreateContextMenu(ContextMenu menu, View v, ContextMenuInfo menuInfo) {
         TerminalSession currentSession = getCurrentSession();
         if (currentSession == null) return;
         boolean autoFillEnabled = mTerminalView.isAutoFillEnabled();
+
         menu.add(Menu.NONE, CONTEXT_MENU_SELECT_URL_ID, Menu.NONE, R.string.action_select_url);
         menu.add(Menu.NONE, CONTEXT_MENU_SHARE_TRANSCRIPT_ID, Menu.NONE, R.string.action_share_transcript);
         if (!DataUtils.isNullOrEmpty(mTerminalView.getStoredSelectedText()))
@@ -472,9 +681,18 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (autoFillEnabled) menu.add(Menu.NONE, CONTEXT_MENU_AUTOFILL_USERNAME, Menu.NONE, R.string.action_autofill_username);
         if (autoFillEnabled) menu.add(Menu.NONE, CONTEXT_MENU_AUTOFILL_PASSWORD, Menu.NONE, R.string.action_autofill_password);
         menu.add(Menu.NONE, CONTEXT_MENU_RESET_TERMINAL_ID, Menu.NONE, R.string.action_reset_terminal);
-        menu.add(Menu.NONE, CONTEXT_MENU_KILL_PROCESS_ID, Menu.NONE, getResources().getString(R.string.action_kill_process, getCurrentSession().getPid())).setEnabled(currentSession.isRunning());
+        menu.add(Menu.NONE, CONTEXT_MENU_KILL_PROCESS_ID, Menu.NONE,
+            getResources().getString(R.string.action_kill_process, getCurrentSession().getPid()))
+            .setEnabled(currentSession.isRunning());
+
+        menu.add(Menu.NONE, CONTEXT_MENU_TOGGLE_EXTRA_KEYS_ID, Menu.NONE, "快捷键栏（ESC/CTRL/ALT）")
+            .setCheckable(true).setChecked(isTerminalToolbarShowing());
+        menu.add(Menu.NONE, CONTEXT_MENU_TOGGLE_TAB_BAR_ID, Menu.NONE, "Session 栏（会话标签）")
+            .setCheckable(true).setChecked(mTabBarVisible);
+
         menu.add(Menu.NONE, CONTEXT_MENU_STYLING_ID, Menu.NONE, R.string.action_style_terminal);
-        menu.add(Menu.NONE, CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON, Menu.NONE, R.string.action_toggle_keep_screen_on).setCheckable(true).setChecked(mPreferences.shouldKeepScreenOn());
+        menu.add(Menu.NONE, CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON, Menu.NONE, R.string.action_toggle_keep_screen_on)
+            .setCheckable(true).setChecked(mPreferences.shouldKeepScreenOn());
         menu.add(Menu.NONE, CONTEXT_MENU_HELP_ID, Menu.NONE, R.string.action_open_help);
         menu.add(Menu.NONE, CONTEXT_MENU_SETTINGS_ID, Menu.NONE, R.string.action_open_settings);
         menu.add(Menu.NONE, CONTEXT_MENU_REPORT_ID, Menu.NONE, R.string.action_report_issue);
@@ -497,6 +715,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             case CONTEXT_MENU_AUTOFILL_PASSWORD: mTerminalView.requestAutoFillPassword(); return true;
             case CONTEXT_MENU_RESET_TERMINAL_ID: onResetTerminalSession(session); return true;
             case CONTEXT_MENU_KILL_PROCESS_ID: showKillSessionDialog(session); return true;
+            case CONTEXT_MENU_TOGGLE_EXTRA_KEYS_ID: toggleTerminalToolbar(); return true;
+            case CONTEXT_MENU_TOGGLE_TAB_BAR_ID: toggleTabBarFromMenu(); return true;
             case CONTEXT_MENU_STYLING_ID: showStylingDialog(); return true;
             case CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON: toggleKeepScreenOn(); return true;
             case CONTEXT_MENU_HELP_ID: ActivityUtils.startActivity(this, new Intent(this, HelpActivity.class)); return true;
@@ -603,7 +823,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public TermuxService getTermuxService() { return mTermuxService; }
     public TerminalView getTerminalView() { return mTerminalView; }
     public TermuxTerminalViewClient getTermuxTerminalViewClient() { return mTermuxTerminalViewClient; }
-    public TermuxTerminalSessionActivityClient getTermuxTerminalSessionClient() { return mTermuxTerminalSessionActivityClient; }
+
+    public TermuxTerminalSessionActivityClient getTermuxTerminalSessionClient() {
+        return mTermuxTerminalSessionActivityClient;
+    }
 
     @Nullable
     public TerminalSession getCurrentSession() {
@@ -673,7 +896,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         FileReceiverActivity.updateFileReceiverActivityComponentsState(this);
         if (mTermuxTerminalSessionActivityClient != null) mTermuxTerminalSessionActivityClient.onReloadActivityStyling();
         if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.onReloadActivityStyling();
-        applyTabBarTheme();   // ★ 换主题时重取资源色
+        if (mTabBarRoot != null) {
+            mTabBarRoot.setBackgroundColor(ContextCompat.getColor(this, R.color.tab_bar_background));
+            applyTabBarVisibility();
+        }
         if (recreateActivity) { Logger.logDebug(LOG_TAG, "Recreating activity"); TermuxActivity.this.recreate(); }
     }
 
@@ -687,180 +913,425 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         return intent;
     }
 
-    /* ========================================================= */
-    /* ==================== TabBar ============================ */
-    /* ========================================================= */
-
-    /** 主题/夜间模式切换时，从资源重新取色（不触发滚动） */
-    private void applyTabBarTheme() {
-        if (mTabBarRoot == null) return;
-        mTabBarRoot.setBackgroundColor(
-                ContextCompat.getColor(this, R.color.tab_bar_background));
-        if (mTabAddButton != null)
-            mTabAddButton.setTextColor(
-                ContextCompat.getColor(this, R.color.tab_add_text));
+    @SuppressLint("RtlHardcoded")
+    @Override
+    public void onBackPressed() {
+        if (getDrawer().isDrawerOpen(Gravity.LEFT)) getDrawer().closeDrawers();
+        else finishActivityIfNotFinishing();
     }
 
-    public void renderTabBar() {
-        if (mTabContainer == null || mTabBarRoot == null) return;
-        TermuxService service = getTermuxService();
-        if (service == null) return;
+    public void finishActivityIfNotFinishing() {
+        if (!TermuxActivity.this.isFinishing()) finish();
+    }
 
-        List<com.termux.shared.termux.shell.command.runner.terminal.TermuxSession> sessions =
-                service.getTermuxSessions();
+    /** ★ toast 改到底部，避免被键盘顶起的输入框挡住 */
+    public void showToast(String text, boolean longDuration) {
+        if (text == null || text.isEmpty()) return;
+        if (mLastToast != null) mLastToast.cancel();
+        mLastToast = Toast.makeText(this, text, longDuration ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT);
+        mLastToast.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, dp(48));
+        mLastToast.show();
+    }
 
-        /* 空态：整条隐藏 */
-        if (sessions.isEmpty()) {
-            mTabBarRoot.setVisibility(View.GONE);
+    /* ========================================================= */
+    /* ================== 命令收藏夹 · 界面优化版 ============= */
+    /* ========================================================= */
+
+    private int dp(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
+    }
+
+    private void showSnippetSheet() {
+        dismissSnippetSheet();
+        loadSnippets();
+
+        Context ctx = this;
+        int radius = dp(14), padH = dp(16), gap = dp(10);
+        int surface = getColorSafe(R.color.snippet_surface, 0xFF262626);
+        int stroke  = getColorSafe(R.color.snippet_stroke,  0xFF3a3a3a);
+        int textCol = ContextCompat.getColor(this, android.R.color.primary_text_dark);
+        int hintCol = ContextCompat.getColor(this, android.R.color.secondary_text_dark);
+
+        LinearLayout root = new LinearLayout(ctx);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(20), dp(16), dp(20), dp(16));
+        root.setBackgroundColor(ContextCompat.getColor(this, android.R.color.background_dark));
+
+        /* ---------- 标题 + 条数徽标 ---------- */
+        LinearLayout head = new LinearLayout(ctx);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(ctx);
+        title.setText("命令收藏夹");
+        title.setTextColor(textCol);
+        title.setTextSize(17);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        head.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView badge = new TextView(ctx);
+        badge.setText(String.valueOf(mSnippets.size()));
+        badge.setTextColor(hintCol);
+        badge.setTextSize(12);
+        badge.setPadding(dp(8), dp(2), dp(8), dp(2));
+        badge.setBackground(createPill(stroke, dp(10)));
+        head.addView(badge);
+        root.addView(head, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        root.addView(spacer(ctx, dp(10)));
+
+        /* ---------- ① 收藏输入行 ---------- */
+        EditText input = new EditText(ctx);
+        input.setHint("输入命令，回车收藏（不会执行）");
+        input.setSingleLine(true);
+        input.setFocusable(true);
+        input.setFocusableInTouchMode(true);
+        input.setTextColor(textCol);
+        input.setHintTextColor(hintCol);
+        input.setTextSize(14);
+        input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        input.setBackground(createField(surface, stroke, radius));
+        input.setPadding(padH, dp(12), padH, dp(12));
+        root.addView(input, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        root.addView(spacer(ctx, gap));
+
+        /* ---------- ② ★ 搜索框：放大镜 + 清空 ✕ ---------- */
+        LinearLayout searchWrap = new LinearLayout(ctx);
+        searchWrap.setOrientation(LinearLayout.HORIZONTAL);
+        searchWrap.setGravity(Gravity.CENTER_VERTICAL);
+        searchWrap.setBackground(createField(surface, stroke, radius));
+        searchWrap.setPadding(dp(4), 0, dp(4), 0);
+
+        TextView magnifier = new TextView(ctx);
+        magnifier.setText("🔍");
+        magnifier.setTextSize(14);
+        magnifier.setPadding(padH, 0, dp(4), 0);
+        searchWrap.addView(magnifier);
+
+        EditText search = new EditText(ctx);
+        search.setHint("搜索名称或命令…");
+        search.setSingleLine(true);
+        search.setFocusable(true);
+        search.setFocusableInTouchMode(true);
+        search.setTextColor(textCol);
+        search.setHintTextColor(hintCol);
+        search.setTextSize(14);
+        search.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_NONE); // 回车不存命令
+        search.setBackground(null);
+        search.setPadding(0, dp(11), 0, dp(11));
+        searchWrap.addView(search, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView clearBtn = new TextView(ctx);
+        clearBtn.setText("✕");
+        clearBtn.setTextSize(14);
+        clearBtn.setTextColor(hintCol);
+        clearBtn.setPadding(dp(8), 0, padH, 0);
+        clearBtn.setClickable(true);
+        clearBtn.setFocusable(true);
+        clearBtn.setVisibility(View.GONE);
+        clearBtn.setOnClickListener(v -> { search.setText(""); search.requestFocus(); });
+        searchWrap.addView(clearBtn);
+
+        root.addView(searchWrap, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        root.addView(spacer(ctx, gap));
+
+        /* ---------- ③ 列表（卡片容器 + 内部滚动） ---------- */
+        ScrollView listScroller = new ScrollView(ctx);
+        listScroller.setVerticalScrollBarEnabled(true);
+        listScroller.setScrollbarFadingEnabled(false);
+        listScroller.setFillViewport(true);
+        listScroller.setBackground(createField(surface, stroke, radius));
+        listScroller.setPadding(dp(4), dp(6), dp(4), dp(6));
+
+        LinearLayout list = new LinearLayout(ctx);
+        list.setOrientation(LinearLayout.VERTICAL);
+        listScroller.addView(list, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        root.addView(listScroller, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        /* ---------- 绘制 + 徽标 / 清空键联动 ---------- */
+        final String[] curFilter = {""};
+        Runnable rebuild = new Runnable() {
+            @Override
+            public void run() {
+                drawSnippetList(list, curFilter[0]);
+                badge.setText(countShown(curFilter[0]) == mSnippets.size()
+                        ? String.valueOf(mSnippets.size())
+                        : countShown(curFilter[0]) + " / " + mSnippets.size());
+                clearBtn.setVisibility(curFilter[0].isEmpty() ? View.GONE : View.VISIBLE);
+            }
+        };
+        drawSnippetList(list, "");
+
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(android.text.Editable s) {}
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                curFilter[0] = s.toString().trim().toLowerCase();
+                drawSnippetList(list, curFilter[0]);
+                int shown = countShown(curFilter[0]);
+                badge.setText(shown == mSnippets.size()
+                        ? String.valueOf(shown) : shown + " / " + mSnippets.size());
+                clearBtn.setVisibility(curFilter[0].isEmpty() ? View.GONE : View.VISIBLE);
+            }
+        });
+
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            String t = input.getText().toString().trim();
+            if (!t.isEmpty()) {
+                String name = t.split("\\s+")[0];
+                if (name.length() > 18) name = name.substring(0, 18);
+                mSnippets.add(0, new Snippet(name, t));
+                saveSnippets();
+                input.setText("");
+                search.setText("");
+                curFilter[0] = "";
+                rebuild.run();
+                showToast("已收藏：" + name, false);
+            }
+            return true;
+        });
+
+        AlertDialog dlg = new AlertDialog.Builder(this)
+            .setTitle(null)   // 标题挪进内容区，整体更整
+            .setView(root)
+            .setNegativeButton("关闭", null)
+            .create();
+        dlg.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+
+        final int[] tries = {0};
+        input.setOnFocusChangeListener((v, hasFocus) -> {
+            if (!hasFocus) return;
+            Window win = dlg.getWindow();
+            if (win != null) {
+                win.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+                win.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+                        | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+            }
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm == null) return;
+            if (!imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT) && tries[0] < 8) {
+                tries[0]++;
+                input.postDelayed(() -> {
+                    if (input.hasFocus()) {
+                        Window w2 = dlg.getWindow();
+                        if (w2 != null) w2.clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+                        imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+                    }
+                }, 120);
+            }
+        });
+        dlg.setOnShowListener(d -> input.requestFocus());
+
+        mSnippetSheet = dlg;
+        dlg.show();
+    }
+
+    /**
+     * 画列表：圆角行 + 名称粗体 + 命令等宽小字 + 右箭头。
+     * 空库 / 零命中都有空态提示；长按菜单新增「复制命令」。
+     */
+    private void drawSnippetList(LinearLayout list, String filter) {
+        Context ctx = this;
+        list.removeAllViews();
+        String f = (filter == null) ? "" : filter.trim().toLowerCase();
+        int textCol = ContextCompat.getColor(this, android.R.color.primary_text_dark);
+        int hintCol = ContextCompat.getColor(this, android.R.color.secondary_text_dark);
+        int accent  = ContextCompat.getColor(this, android.R.color.holo_green_light);
+        int surface = getColorSafe(R.color.snippet_surface, 0xFF262626);
+        int stroke  = getColorSafe(R.color.snippet_stroke,  0xFF3a3a3a);
+        int radius  = dp(10);
+
+        if (mSnippets.isEmpty()) {
+            list.addView(emptyState(ctx, "📭  还没有收藏", "先输入一条命令，回车即可收藏", hintCol));
             return;
         }
-        mTabBarRoot.setVisibility(View.VISIBLE);
-        mTabBarRoot.setBackgroundColor(
-                ContextCompat.getColor(this, R.color.tab_bar_background));
 
-        mTabContainer.removeAllViews();
-        TerminalSession current = getCurrentSession();
+        boolean hasMatch = false;
+        for (int i = 0; i < mSnippets.size(); i++) {
+            final Snippet s = mSnippets.get(i);
+            final int idx = i;
+            if (!f.isEmpty()
+                    && !s.name.toLowerCase().contains(f)
+                    && !s.cmd.toLowerCase().contains(f)) continue;
+            hasMatch = true;
 
-        int d = (int) getResources().getDisplayMetrics().density;
-        int tabHeight = 36 * d;
-        int padH = 12 * d, padV = 4 * d, gap = 2 * d;
+            LinearLayout row = new LinearLayout(ctx);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(12), dp(11), dp(12), dp(11));
+            row.setBackground(createField(surface, stroke, radius));
 
-        int activeBg   = ContextCompat.getColor(this, R.color.tab_active_bg);
-        int inactiveBg = ContextCompat.getColor(this, R.color.tab_inactive_bg);
-        int activeText  = ContextCompat.getColor(this, R.color.tab_active_text);
-        int inactiveText= ContextCompat.getColor(this, R.color.tab_inactive_text);
-        int closeNormal = ContextCompat.getColor(this, R.color.tab_close_normal);
-        int closePress  = ContextCompat.getColor(this, R.color.tab_close_press);
+            LinearLayout body = new LinearLayout(ctx);
+            body.setOrientation(LinearLayout.VERTICAL);
+            body.setPadding(0, 0, dp(10), 0);
 
-        for (int i = 0; i < sessions.size(); i++) {
-            com.termux.shared.termux.shell.command.runner.terminal.TermuxSession ts = sessions.get(i);
-            TerminalSession s = ts.getTerminalSession();
-            if (s == null) continue;
+            TextView name = new TextView(ctx);
+            name.setText("▸ " + s.name);
+            name.setTextColor(textCol);
+            name.setTextSize(14);
+            name.setTypeface(null, android.graphics.Typeface.BOLD);
+            name.setSingleLine(true);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            body.addView(name, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-            final TerminalSession clickSession = s;
-            final boolean isActive = (current != null && current == s);
+            TextView cmd = new TextView(ctx);
+            cmd.setText(s.cmd);
+            cmd.setTextColor(hintCol);
+            cmd.setTextSize(12);
+            cmd.setTypeface(android.graphics.Typeface.MONOSPACE);   // ★ 命令等宽
+            cmd.setSingleLine(true);
+            cmd.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+            body.addView(cmd, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-            LinearLayout tabLayout = new LinearLayout(this);
-            tabLayout.setOrientation(LinearLayout.HORIZONTAL);
-            tabLayout.setGravity(Gravity.CENTER_VERTICAL);
-            tabLayout.setPadding(padH, padV, 6 * d, padV);
-            tabLayout.setBackgroundColor(isActive ? activeBg : inactiveBg);
+            row.addView(body, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
-            TextView tabText = new TextView(this);
-            tabText.setText(s.mSessionName != null ? s.mSessionName : "Session " + (i + 1));
-            tabText.setTextColor(isActive ? activeText : inactiveText);
-            tabText.setTextSize(12);
-            tabText.setSingleLine(true);
-            tabText.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            tabText.setPadding(0, 0, 10 * d, 0);
+            TextView arrow = new TextView(ctx);
+            arrow.setText("❯");
+            arrow.setTextColor(accent);
+            arrow.setTextSize(15);
+            arrow.setPadding(dp(4), 0, 0, 0);
+            row.addView(arrow);
 
-            /* 只切换 + 高亮，不滚 */
-            tabText.setOnClickListener(v -> {
-                if (mTermuxTerminalSessionActivityClient != null) {
-                    mTermuxTerminalSessionActivityClient.setCurrentSession(clickSession);
-                    renderTabBar();
-                }
+            final String keep = f;
+            row.setOnClickListener(v -> {
+                TerminalSession cur = getCurrentSession();
+                if (cur == null) { showToast("没有活跃会话", false); return; }
+                cur.write(s.cmd);
+                dismissSnippetSheet();
+                showToast("已写入：" + s.name, false);
             });
-            tabText.setOnLongClickListener(v -> { renameSession(clickSession); return true; });
-
-            TextView closeBtn = new TextView(this);
-            closeBtn.setText("×");
-            closeBtn.setTextColor(closeNormal);
-            closeBtn.setTextSize(16);
-            closeBtn.setPadding(6 * d, 0, 6 * d, 0);
-            closeBtn.setClickable(true);
-            closeBtn.setFocusable(true);
-            closeBtn.setOnClickListener(v -> closeSession(clickSession));
-            closeBtn.setOnTouchListener((v, event) -> {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        closeBtn.setTextColor(closePress); break;
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        closeBtn.setTextColor(closeNormal); break;
-                }
-                return false;   // 仍让 onClick 正常触发
+            row.setOnLongClickListener(v -> {
+                new AlertDialog.Builder(this)
+                    .setTitle(s.name)
+                    .setItems(new CharSequence[]{"置顶", "删除", "复制命令"}, (d, which) -> {
+                        switch (which) {
+                            case 0: mSnippets.remove(idx); mSnippets.add(0, s); break;
+                            case 1: mSnippets.remove(idx); break;
+                            case 2:
+                                ClipboardManager cm =
+                                    (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                                if (cm != null) {
+                                    cm.setPrimaryClip(ClipData.newPlainText("cmd", s.cmd));
+                                    showToast("已复制：" + s.cmd, false);
+                                }
+                                return;
+                        }
+                        saveSnippets();
+                        drawSnippetList(list, keep);   // ★ 保持当前过滤词
+                    }).show();
+                return true;
             });
-
-            LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-            tabLayout.addView(tabText, textParams);
-            tabLayout.addView(closeBtn);
-
-            LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, tabHeight);
-            tabParams.setMargins(gap, 0, gap, 0);
-            mTabContainer.addView(tabLayout, tabParams);
+            list.addView(row, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            list.addView(spacer(ctx, dp(6)));   // 卡片间距，替代生硬分割线
         }
-        /* ★ 不调用任何滚动逻辑，条保持当前位置不动 */
+
+        if (!hasMatch) {
+            list.addView(emptyState(ctx, "🔎  没有匹配",
+                    "「" + f + "」什么都没搜到，换个词试试", hintCol));
+        }
+    }
+
+    private void dismissSnippetSheet() {
+        if (mSnippetSheet != null) { mSnippetSheet.dismiss(); mSnippetSheet = null; }
+    }
+
+    private LinearLayout emptyState(Context ctx, String big, String sub, int subColor) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.setPadding(dp(8), dp(28), dp(8), dp(28));
+        TextView a = new TextView(ctx);
+        a.setText(big); a.setTextColor(subColor); a.setTextSize(15);
+        a.setPadding(0, 0, 0, dp(6));
+        box.addView(a);
+        TextView b = new TextView(ctx);
+        b.setText(sub); b.setTextColor(subColor); b.setTextSize(12);
+        box.addView(b);
+        return box;
+    }
+
+    private android.graphics.drawable.Drawable createField(int fill, int strokeColor, int radiusPx) {
+        android.graphics.drawable.GradientDrawable d =
+                new android.graphics.drawable.GradientDrawable();
+        d.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        d.setCornerRadius(radiusPx);
+        d.setColor(fill);
+        d.setStroke(Math.max(1, dp(1)), strokeColor);
+        return d;
+    }
+
+    private android.graphics.drawable.Drawable createPill(int fill, int radiusPx) {
+        android.graphics.drawable.GradientDrawable d =
+                new android.graphics.drawable.GradientDrawable();
+        d.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        d.setCornerRadius(radiusPx);
+        d.setColor(fill);
+        return d;
+    }
+
+    private View spacer(Context ctx, int hPx) {
+        View v = new View(ctx);
+        v.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, hPx));
+        return v;
+    }
+
+    private int countShown(String filter) {
+        String f = (filter == null) ? "" : filter.trim().toLowerCase();
+        if (f.isEmpty()) return mSnippets.size();
+        int n = 0;
+        for (Snippet s : mSnippets)
+            if (s.name.toLowerCase().contains(f) || s.cmd.toLowerCase().contains(f)) n++;
+        return n;
+    }
+
+    private int getColorSafe(int resId, int fallback) {
+        try { return ContextCompat.getColor(this, resId); }
+        catch (Exception e) { return fallback; }
     }
 
     /**
-     * 关闭 session：原版逻辑，一字未改。
-     * 走 Termux 正常退出流程 → 自动按回车 → Tab 消失
+     * 收藏夹路径：~/.termux/snippets.json
+     *   .../files/home/.termux/snippets.json  ←→  终端 $HOME/.termux
      */
-    private void closeSession(TerminalSession session) {
-        if (session == null) return;
-        TermuxService service = getTermuxService();
-        if (service == null) return;
-
-        int index = service.getIndexOfSession(session);
-        int size = service.getTermuxSessionsSize();
-
-        // 1. 杀进程（走 Termux 正常退出流程，会显示 press Enter）
-        session.finishIfRunning();
-
-        // 2. 延迟自动按回车，跳过 press Enter 提示
-        mTerminalView.postDelayed(() -> {
-            // 自动替用户敲回车
-            session.write("\n");
-
-            // 3. 从列表移除
-            service.removeTermuxSession(session);
-
-            // 4. 切到下一个 session
-            int newSize = service.getTermuxSessionsSize();
-            if (newSize == 0) {
-                finishActivityIfNotFinishing();
-            } else {
-                int newIndex = Math.max(0, Math.min(index, newSize - 1));
-                com.termux.shared.termux.shell.command.runner.terminal.TermuxSession next =
-                        service.getTermuxSession(newIndex);
-                if (next != null && next.getTerminalSession() != null) {
-                    mTerminalView.attachSession(next.getTerminalSession());
-                    if (mTermuxTerminalSessionActivityClient != null) {
-                        mTermuxTerminalSessionActivityClient.setCurrentSession(
-                                next.getTerminalSession());
-                    }
-                }
-            }
-
-            // 5. 刷新
-            mTerminalView.post(() -> renderTabBar());
-        }, 10);
+    private File getSnippetsFile() {
+        File dir = new File(getApplicationContext().getFilesDir(), "home/.termux");
+        dir.mkdirs();
+        return new File(dir, SNIPPETS_FILE);
     }
 
-    /**
-     * 重命名 session（原版）
-     */
-    private void renameSession(TerminalSession session) {
-        if (session == null) return;
+    private void loadSnippets() {
+        mSnippets.clear();
+        try {
+            File f = getSnippetsFile();
+            if (!f.exists()) return;
+            String s = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+            if (s.trim().isEmpty()) return;
+            JSONArray arr = new JSONArray(s);
+            for (int i = 0; i < arr.length(); i++) mSnippets.add(Snippet.fromJson(arr.getJSONObject(i)));
+        } catch (Exception e) {
+            Logger.logVerbose(LOG_TAG, "load snippets skipped: " + e.getMessage());
+        }
+    }
 
-        EditText input = new EditText(this);
-        input.setText(session.mSessionName);
-        input.setSingleLine(true);
-
-        new AlertDialog.Builder(this)
-            .setTitle("重命名会话")
-            .setView(input)
-            .setPositiveButton("确定", (d, w) -> {
-                String name = input.getText().toString().trim();
-                if (!name.isEmpty()) {
-                    session.mSessionName = name;
-                    renderTabBar();
-                }
-            })
-            .setNegativeButton("取消", null)
-            .show();
+    private void saveSnippets() {
+        try {
+            File f = getSnippetsFile();
+            JSONArray arr = new JSONArray();
+            for (Snippet sn : mSnippets) arr.put(sn.toJson());
+            String tmp = f.getPath() + ".tmp";
+            try (FileWriter w = new FileWriter(tmp)) { w.write(arr.toString(2)); }
+            new File(tmp).renameTo(f);
+        } catch (Exception e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "save snippets failed", e);
+        }
     }
 }

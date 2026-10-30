@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<com.termux.app.terminal.TermuxActivityRootView xmlns:android="http://schemas.android.com/apk/res/android"
+<com.termux.app.terminal.TermuxActivityRootView
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/activity_termux_root_view"
@@ -8,7 +9,7 @@
     android:orientation="vertical"
     android:fitsSystemWindows="true">
 
-    <!-- ========== 终端主体区（占满剩余高度） ========== -->
+    <!-- ========== 终端主体区 ========== -->
     <RelativeLayout
         android:id="@+id/activity_termux_root_relative_layout"
         android:layout_width="match_parent"
@@ -24,7 +25,7 @@
             android:layout_alignParentTop="true"
             android:layout_above="@+id/terminal_toolbar_view_pager">
 
-            <!-- 终端画面 -->
+            <!-- 终端 -->
             <com.termux.view.TerminalView
                 android:id="@+id/terminal_view"
                 android:layout_width="match_parent"
@@ -35,7 +36,7 @@
                 android:scrollbars="vertical"
                 tools:ignore="UnusedAttribute" />
 
-            <!-- 左抽屉：会话列表 -->
+            <!-- 左侧抽屉：只剩 齿轮 + 会话列表，不放操作按钮 -->
             <LinearLayout
                 android:id="@+id/left_drawer"
                 android:layout_width="240dp"
@@ -61,24 +62,7 @@
                         android:background="@null"
                         android:contentDescription="@string/action_open_settings"
                         app:tint="?attr/termuxActivityDrawerImageTint" />
-                </LinearLayout>
-
-                <ListView
-                    android:id="@+id/terminal_sessions_list"
-                    android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"
-                    android:layout_gravity="top"
-                    android:choiceMode="singleChoice"
-                    android:longClickable="true" />
-
-                <LinearLayout
-                    style="?android:attr/buttonBarStyle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <com.google.android.material.button.MaterialButton
+                        <com.google.android.material.button.MaterialButton
                         android:id="@+id/toggle_keyboard_button"
                         style="?android:attr/buttonBarButtonStyle"
                         android:layout_width="0dp"
@@ -94,10 +78,19 @@
                         android:layout_weight="1"
                         android:text="@string/action_new_session" />
                 </LinearLayout>
+
+                <ListView
+                    android:id="@+id/terminal_sessions_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:layout_gravity="top"
+                    android:choiceMode="singleChoice"
+                    android:longClickable="true" />
             </LinearLayout>
         </androidx.drawerlayout.widget.DrawerLayout>
 
-        <!-- ExtraKeys / 文本输入工具栏 -->
+        <!-- Extra Keys / 快捷键栏 -->
         <androidx.viewpager.widget.ViewPager
             android:id="@+id/terminal_toolbar_view_pager"
             android:layout_width="match_parent"
@@ -107,22 +100,26 @@
             android:visibility="gone" />
     </RelativeLayout>
 
-    <!-- ========== 底部 TabBar：标签可滚，＋ 钉在屏幕最右 ========== -->
+    <!--
+        ========== 底部栏 ==========
+        左侧：Session 标签横滑
+        右侧：＋ / ☆ / ⚙  三个等分（id 全局只此一份）
+    -->
     <RelativeLayout
         android:id="@+id/tab_bar_root"
         android:layout_width="match_parent"
         android:layout_height="36dp"
         android:background="@color/tab_bar_background">
 
-        <!-- 标签滚动区：右边让出 44dp 给 ＋，只滚标签不滚按钮 -->
+        <!-- 标签区：退到 action_group 左边 -->
         <HorizontalScrollView
             android:id="@+id/tab_scroll_view"
             android:layout_width="match_parent"
             android:layout_height="36dp"
-            android:layout_toStartOf="@+id/tab_add_button"
+            android:layout_alignParentStart="true"
+            android:layout_toStartOf="@+id/action_group"
             android:scrollbars="none"
-            android:scrollbarStyle="outsideOverlay"
-            android:fillViewport="false">
+            android:scrollbarStyle="outsideOverlay">
 
             <LinearLayout
                 android:id="@+id/tab_container"
@@ -132,22 +129,49 @@
                 android:gravity="center_vertical" />
         </HorizontalScrollView>
 
-        <!-- 固定最右侧的新建按钮（不随标签滚动） -->
-        <TextView
-            android:id="@+id/tab_add_button"
-            android:layout_width="44dp"
-            android:layout_height="match_parent"
+        <!-- ★ 三个按钮一组，等宽，id 只在这儿声明 -->
+        <LinearLayout
+            android:id="@+id/action_group"
+            android:layout_width="108dp"
+            android:layout_height="36dp"
             android:layout_alignParentEnd="true"
-            android:gravity="center"
-            android:text="＋"
-            android:textSize="20sp"
-            android:textColor="@color/tab_add_text"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:clickable="true"
-            android:focusable="true" />
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tab_add_button"
+                style="?attr/selectableItemBackgroundBorderless"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="＋"
+                android:textSize="18sp"
+                android:textColor="@color/tab_add_text" />
+
+            <TextView
+                android:id="@+id/snippet_button"
+                style="?attr/selectableItemBackgroundBorderless"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="☆"
+                android:textSize="16sp"
+                android:textColor="@color/tab_add_text" />
+
+            <TextView
+                android:id="@+id/drawer_menu_button"
+                style="?attr/selectableItemBackgroundBorderless"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="⚙"
+                android:textSize="16sp"
+                android:textColor="@color/tab_add_text" />
+        </LinearLayout>
     </RelativeLayout>
 
-    <!-- 导航栏占位 -->
     <View
         android:id="@+id/activity_termux_bottom_space_view"
         android:layout_width="match_parent"

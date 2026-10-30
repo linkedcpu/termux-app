@@ -9,5 +9,7 @@
 <color name="tab_close_normal">#BFBFBF</color>
 <color name="tab_close_press">#FF5252</color>
 <color name="tab_add_text">#BFBFBF</color>
+<color name="snippet_surface">#262626</color>
+<color name="snippet_stroke">#3a3a3a</color>
 
 </resources>
