@@ -14,4 +14,9 @@ allprojects {
         mavenCentral()
         maven { url "https://jitpack.io" }
     }
+    afterEvaluate { p ->
+        if (p.hasProperty('android')) {
+            p.android.buildToolsVersion = "35.0.1" // 换成你已装的
+        }
+    }
 }
