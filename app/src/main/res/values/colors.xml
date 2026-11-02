@@ -14,4 +14,6 @@
   <!-- res/values/snippet_colors.xml -->
   <color name="snippet_bg">#FF12141a</color>
   <color name="snippet_accent">#FF5ee0a0</color>
+<color name="tab_accent">#7FD4E0</color>
+<color name="tab_strip_background">#7FD4E0</color>
 </resources>
