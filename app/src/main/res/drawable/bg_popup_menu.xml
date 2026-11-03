@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ 标签上方抽屉背景
+  - 上沿圆角、底边直角：圆角远离标签，底边对着「标签顶边 ↔ 抽屉底边」那条缝
+  - layer-list 第一层是向上/向两侧晕开的投影，让间距处显出浮起感
+  - 颜色只比标签栏 0xFF141414 亮一档，靠「缝 + 阴影」分层次，不靠硬撞色
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 投影层：bottom 取负值，让影子主要往上方和两侧走，不压到标签那条缝 -->
+    <item
+        android:left="3dp"
+        android:right="3dp"
+        android:top="3dp"
+        android:bottom="-4dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#42000000" />
+            <corners
+                android:topLeftRadius="12dp"
+                android:topRightRadius="12dp"
+                android:bottomLeftRadius="0dp"
+                android:bottomRightRadius="0dp" />
+        </shape>
+    </item>
+
+    <!-- 实体层：底边直角贴缝，上边圆角收口 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FF242424" />
+            <corners
+                android:topLeftRadius="12dp"
+                android:topRightRadius="12dp"
+                android:bottomLeftRadius="0dp"
+                android:bottomRightRadius="0dp" />
+        </shape>
+    </item>
+</layer-list>

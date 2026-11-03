@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      ★ 抽屉菜单项：尺寸/字号/字色对齐底部标签栏，避免弹窗自成一套风格
+      注意：整个工程里只允许存在这一个 TabPopupItem 定义，
+      若 res/values/styles.xml 里已有同名 style，请把这段合并进去，别两个文件都留。
+    -->
+    <style name="TabPopupItem">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">40dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <!-- 标签栏文字偏灰白，这里取同一档，不用刺眼纯白 -->
+        <item name="android:textColor">#E0E0E0</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+    </style>
+</resources>

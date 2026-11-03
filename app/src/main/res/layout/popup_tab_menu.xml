@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ★ 标签上方抽屉菜单
+  - 宽度由 TermuxActivity 按标签宽锁死（match_parent 只是占位）
+  - 背景自带上圆角 + 投影，底边直角对着标签顶边
+  - 不用 elevation：5.x 上 elevation 会把圆角裁成直角，阴影交给 layer-list 更稳
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tab_popup_root"
+    android:orientation="vertical"
+    android:background="@drawable/bg_popup_menu"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <TextView
+        android:id="@+id/item_rename"
+        style="@style/TabPopupItem"
+        android:text="重命名" />
+
+    <TextView
+        android:id="@+id/item_reset"
+        style="@style/TabPopupItem"
+        android:text="重置终端" />
+
+    <TextView
+        android:id="@+id/item_kill"
+        style="@style/TabPopupItem"
+        android:text="杀死进程" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="6dp"
+        android:background="#33FFFFFF" />
+
+    <TextView
+        android:id="@+id/item_close"
+        style="@style/TabPopupItem"
+        android:text="关闭会话" />
+
+</LinearLayout>

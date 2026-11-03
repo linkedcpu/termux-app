@@ -9,6 +9,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -27,6 +29,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.PopupMenu;
+import android.widget.PopupWindow;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -73,7 +76,8 @@ import org.json.JSONObject;
 
 /**
  * Termux 主界面
- *  ★ 底部栏 左:右 = 4:1，标签项整条可点，右侧三点独立菜单，无长按
+ *  ★ 底部栏 左:右 = 4:1，标签项整条可点，右侧三点弹出「等标签宽、贴标签顶边」的抽屉菜单
+ *  ★ 抽屉全程不抢输入焦点，软键盘保持原样不收起
  */
 public final class TermuxActivity extends AppCompatActivity implements ServiceConnection {
 
@@ -108,6 +112,16 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private SnippetManager mSnippetMgr;
     private View           mSnippetPanel;
 
+    /* ========== ★ 标签抽屉（任意时刻最多一个） ========== */
+    private PopupWindow mTabPopup;
+
+    /**
+     * ★ 弹窗底边 与 标签顶边 之间的呼吸缝（dp）。
+     *   0 = 严丝合缝；6~10 是“悬浮小抽屉”的观感，按喜好调。
+     *   缝靠背景 layer-list 的向上投影填层次，不会空得发飘。
+     */
+    private static final int TAB_DRAWER_GAP_DP = 6;
+
     /* ========== 菜单 id ========== */
     private static final int CONTEXT_MENU_TOGGLE_EXTRA_KEYS_ID = 12;
     private static final int CONTEXT_MENU_TOGGLE_TAB_BAR_ID    = 13;
@@ -124,7 +138,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_SETTINGS_ID = 8;
     private static final int CONTEXT_MENU_REPORT_ID = 9;
 
-    /* ★ 标签三点菜单 id */
+    /* ★ 标签抽屉菜单 id（PopupWindow 自行处理点击，仅作常量保留） */
     private static final int TAB_MENU_RENAME = 1001;
     private static final int TAB_MENU_RESET   = 1002;
     private static final int TAB_MENU_KILL    = 1003;
@@ -253,6 +267,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         Logger.logDebug(LOG_TAG, "onStop");
         if (mIsInvalidState) return;
         mIsVisible = false;
+        dismissAnyTabPopup();                       // ★ 抽屉随界面不可见一起收掉
         if (mTermuxTerminalSessionActivityClient != null) mTermuxTerminalSessionActivityClient.onStop();
         if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.onStop();
         removeTermuxActivityRootViewGlobalLayoutListener();
@@ -266,6 +281,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         super.onDestroy();
         Logger.logDebug(LOG_TAG, "onDestroy");
         if (mIsInvalidState) return;
+        dismissAnyTabPopup();
         if (mTermuxService != null) {
             mTermuxService.unsetTermuxTerminalSessionClient();
             mTermuxService = null;
@@ -503,7 +519,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     /* ========================================================= */
-    /* ★ 底部栏：整条标签可点 + 右侧三点独立菜单                   */
+    /* ★ 底部栏：整条标签可点 + 右侧三点弹出等宽抽屉               */
     /* ========================================================= */
 
     private void setupTabAddButton() {
@@ -534,7 +550,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     /**
      * ★ 标签宽度 = 左侧(屏幕 4/5) ÷ 4 = 屏幕宽 / 5
-     *   整条标签(root)响应切换，三点(more)单独弹菜单并阻断冒泡
+     *   整条标签(root)响应切换；三点(more)弹出「等标签宽、贴标签顶边」的抽屉，键盘不动
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     public void renderTabBar() {
@@ -551,8 +567,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         float density = getResources().getDisplayMetrics().density;
         int screenPx  = getResources().getDisplayMetrics().widthPixels;
-        int leftPx    = screenPx * 4 / 5;          // 左侧 4 份
-        int tabW      = Math.max((int) (48 * density), leftPx / 4);
+      //  int leftPx    = screenPx * 4 / 5;          // 左侧 4 份
+        int tabW      = 288;
+        //Math.max((int) (48 * density), leftPx / 4);
         int gap       = (int) (0 * density);
 
         for (int i = 0; i < sessions.size(); i++) {
@@ -589,24 +606,25 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 more.setColorFilter(0xFF777777);
             }
 
-            // ★★★ 整条标签点击 → 切换会话（热区 = tabW × 40dp）
+            // ★ 整条标签点击 → 切换会话（抽屉若开着先收掉）
             root.setOnClickListener(v -> {
+                dismissAnyTabPopup();
                 mTermuxTerminalSessionActivityClient.setCurrentSession(target);
                 renderTabBar();
                 ensureTabBarVisible();
             });
 
-            // ★★★ 三点菜单：先切过去，再弹菜单；阻止事件冒到 root
+            // ★ 三点 → 弹出等标签宽的抽屉；先把该会话切到前台
             more.setOnClickListener(v -> {
                 v.getParent().requestDisallowInterceptTouchEvent(true);
                 if (current != target) {
                     mTermuxTerminalSessionActivityClient.setCurrentSession(target);
                     renderTabBar();
                 }
-                showTabMenu(more, target);
+                showTabDrawer(more, target);
             });
 
-            // ★ 长按整条无反应（消费掉）
+            // ★ 长按整条无反应（消费掉，避免与点击打架）
             root.setOnLongClickListener(v -> true);
 
             LinearLayout.LayoutParams tlp =
@@ -617,26 +635,94 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
     }
 
-    /** ★ 标签右侧三点菜单 */
-    private void showTabMenu(ImageView anchor, TerminalSession session) {
+    /* ================= ★ 标签抽屉（PopupWindow，键盘不收） ================= */
+
+    /** 入口：等标签布局完成再量宽，避免 getWidth() == 0 */
+    private void showTabDrawer(ImageView more, TerminalSession session) {
         if (session == null) return;
         final TerminalSession target = session;
+        // 锚点取整条标签 root，抽屉宽度/对齐都以它为基准
+        final View anchor = (View) more.getParent();
+        dismissAnyTabPopup();
+        anchor.post(() -> showTabDrawerAbove(anchor, target));
+    }
 
-        PopupMenu menu = new PopupMenu(this, anchor);   // 两参，兼容 API 21 以下
-        menu.getMenu().add(Menu.NONE, TAB_MENU_RENAME, 0, "重命名");
-        menu.getMenu().add(Menu.NONE, TAB_MENU_RESET,   1, "重置终端");
-        menu.getMenu().add(Menu.NONE, TAB_MENU_KILL,    2, "杀死进程").setEnabled(session.isRunning());
-        menu.getMenu().add(Menu.NONE, TAB_MENU_CLOSE,   3, "关闭会话");
-        menu.setOnMenuItemClickListener(item -> {
-            switch (item.getItemId()) {
-                case TAB_MENU_RENAME: renameSession(target);   return true;
-                case TAB_MENU_RESET:  onResetTerminalSession(target); return true;
-                case TAB_MENU_KILL:   showKillSessionDialog(target);  return true;
-                case TAB_MENU_CLOSE:  closeSession(target);   return true;
-                default: return false;
-            }
+    /**
+     * ★ 关键：focusable=true 也能保住键盘 —— 靠下面两句
+     *      setInputMethodMode(INPUT_METHOD_NOT_NEEDED)   窗口不碰输入法
+     *      setSoftInputMode(SOFT_INPUT_STATE_UNCHANGED)  键盘状态不被切换
+     * 兼容性好于 focusable=false（后者在部分 ROM 会吃掉第一次 ACTION_UP）。
+     */
+    private void showTabDrawerAbove(View anchor, TerminalSession target) {
+        int anchorW = anchor.getWidth();
+        if (anchorW <= 0) anchorW = dp(200);
+
+        View content = getLayoutInflater().inflate(R.layout.popup_tab_menu, null);
+
+        // ★ 宽度锁成标签宽，高度按内容量
+        content.measure(
+            View.MeasureSpec.makeMeasureSpec(anchorW, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int popupW = anchorW;
+        int popupH = content.getMeasuredHeight();
+
+        mTabPopup = new PopupWindow(content, popupW, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+
+        // ★ 弹窗自身背景必须透明：圆角 + 阴影都在 content 的 bg_popup_menu 里画。
+        //   若这里塞实色，5.x 上会把圆角裁成直角，还会和布局阴影叠成双影。
+        mTabPopup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        mTabPopup.setOutsideTouchable(true);
+        mTabPopup.setAnimationStyle(0);                     // 无弹出动画 → 像标签栏原地展开，不“砸”下来
+
+        // ★★★ 压住键盘的核心：窗口不碰输入法、键盘状态不被切换
+        mTabPopup.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
+        mTabPopup.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED);
+
+        mTabPopup.setOnDismissListener(() -> mTabPopup = null);
+
+        // 定位：★ 弹窗底边 = 标签顶边 − gap，中间空出一道缝
+        int[] loc = new int[2];
+        anchor.getLocationOnScreen(loc);
+        int gap = dp(TAB_DRAWER_GAP_DP);
+        int x = loc[0];
+        int y = loc[1] - popupH - gap;
+        if (y < getStatusBarHeight()) {
+            // 上方顶出屏幕 → 翻到标签下方，缝留在标签底边之下，同样呼吸感
+            y = loc[1] + anchor.getHeight() + gap;
+        }
+
+        mTabPopup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y);
+
+        /* ---------- 各项点击：先收抽屉，再执行，焦点钉回终端 ---------- */
+        content.findViewById(R.id.item_rename).setOnClickListener(v -> {
+            dismissAnyTabPopup(); mTerminalView.requestFocus(); renameSession(target);
         });
-        menu.show();
+        content.findViewById(R.id.item_reset).setOnClickListener(v -> {
+            dismissAnyTabPopup(); mTerminalView.requestFocus(); onResetTerminalSession(target);
+        });
+
+        View kill = content.findViewById(R.id.item_kill);
+        kill.setEnabled(target.isRunning());
+        kill.setAlpha(target.isRunning() ? 1f : 0.4f);
+        kill.setOnClickListener(v -> {
+            if (!target.isRunning()) return;
+            dismissAnyTabPopup();
+            mTerminalView.requestFocus();
+            showKillSessionDialog(target);
+        });
+
+        content.findViewById(R.id.item_close).setOnClickListener(v -> {
+            dismissAnyTabPopup();
+            // 关会话是异步收尾，post 回去把焦点还给终端，键盘不闪
+            mTerminalView.post(() -> { mTerminalView.requestFocus(); closeSession(target); });
+        });
+    }
+
+    private void dismissAnyTabPopup() {
+        if (mTabPopup != null && mTabPopup.isShowing()) {
+            mTabPopup.dismiss();
+        }
+        mTabPopup = null;
     }
 
     @SuppressWarnings("rawtypes")
@@ -705,6 +791,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     public void ensureTabBarVisible() {
         if (mTabBarRoot == null) return;
+        // 空列表时不强行拉出一条空黑条
+        TermuxService service = getTermuxService();
+        if (service != null && service.getTermuxSessions().isEmpty()) return;
         if (!mTabBarVisible) { mTabBarVisible = true; applyTabBarVisibility(); renderTabBar(); }
     }
 
@@ -940,6 +1029,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @SuppressLint("RtlHardcoded")
     @Override
     public void onBackPressed() {
+        // ★ 1) 先收标签抽屉：把焦点钉回终端，键盘保持
+        if (mTabPopup != null && mTabPopup.isShowing()) {
+            dismissAnyTabPopup();
+            mTerminalView.requestFocus();
+            return;
+        }
+        // 2) 再收收藏夹
         if (mSnippetMgr != null && mSnippetMgr.isExpanded()) {
             mSnippetMgr.collapse();
             return;
@@ -959,4 +1055,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private int dp(int dp) { return Math.round(dp * getResources().getDisplayMetrics().density); }
+
+    private int getStatusBarHeight() {
+        int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        return resId > 0 ? getResources().getDimensionPixelSize(resId) : dp(24);
+    }
 }
