@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+    ═══ 翻译说明（AI / 人工通用）═══
+    1. 把 TODO(英文原文) 里的英文换成简体中文，翻完前保留 TODO(...) 外壳。
+    2. 必须原样保留占位符：%s %d %1$s %1$d，以及 \n、单引号、实体引用 &FOO;。
+        例：Cannot connect to %s → 无法连接到 %s
+    3. 不要翻译 name="..." 里的 key，只翻标签体。
+    4. 单引号写成 \' 或包 CDATA；别丢标点语义。
+    5. 语气保持终端工具的简洁 tech 风，按钮词 2~4 字，不做过度本地化。
+    6. 翻完校验：./gradlew :terminal-view:checkMissingTranslations
+    7. 本说明可随文件提交，也可定稿后整段删掉。
+    ═══════════════════════════════════
+    -->
+    <string name="copy_text">TODO(Copy)</string>
+    <string name="paste_text">TODO(Paste)</string>
+    <string name="text_selection_more">TODO(More…)</string>
+</resources>
