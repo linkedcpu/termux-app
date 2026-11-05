@@ -20,3 +20,191 @@ allprojects {
         }
     }
 }
+
+// =============================================================
+//  翻译对齐检查 —— 追加在文件末尾，别放进 allprojects
+//  ./gradlew :app:checkMissingTranslations
+//  ./gradlew :app:generateZhSkeleton
+//  ./gradlew :app:assembleDebug   ← 自动先跑一遍，只提示不拦截
+// =============================================================
+
+// ---- 纯 indexOf 手撕 <!-- --> 注释，【保留】 <!DOCTYPE ... [ <!ENTITY > ]>
+//     不用任何正则 / flag，旧 Groovy 也不会在 replaceAll(/.../s) 上炸。
+//     原因：values/strings.xml 用了 &TERMUX_APP_NAME; 实体，删 DOCTYPE 会 Undefined entity。
+def stripXml(String s) {
+    if (s == null || s.isEmpty()) return ''
+    def out = new StringBuilder()
+    def i = 0
+    def n = s.length()
+    while (true) {
+        def c = s.indexOf('<!--', i)
+        if (c < 0) { out.append(s.substring(i)); break }
+        out.append(s.substring(i, c))
+        def e = s.indexOf('-->', c + 4)
+        i = e < 0 ? n : e + 3
+    }
+    return out.toString()
+}
+
+// ---- 扒出英文源文件的 <!DOCTYPE ... [ <!ENTITY ...> ]> 实体块，供中文包复用 ----
+//     返回 null 表示该文件没有实体块，中文包也不必写。
+def extractDoctype(String enText) {
+    if (enText == null || !enText.contains('<!DOCTYPE')) return null
+    def s = enText.indexOf('<!DOCTYPE')
+    def e = enText.indexOf(']>', s)
+    if (e < 0) return null
+    return enText.substring(s, e + 2).trim()
+}
+
+gradle.projectsEvaluated {
+    rootProject.subprojects { p ->
+        if (!p.file('src/main/res').exists()) return
+
+        // ---------- 任务 1：检查（只提示，不抛异常） ----------
+        p.tasks.register('checkMissingTranslations') {
+            group = 'verification'
+            description = "检查 ${p.name} 中文包与英文包是否对齐（只提示，不拦截构建）"
+            doLast {
+                def pat = ~/<string\s+name\s*=\s*"([^"]+)"[^>]*>/
+                def en = [] as Set<String>
+                def vd = p.file('src/main/res/values')
+                if (vd.exists()) vd.listFiles().findAll { it.name ==~ /strings.*\.xml/ }.each { f ->
+                    def m = (stripXml(f.text) =~ pat)
+                    while (m.find()) { def k = m.group(1)?.trim(); if (k) en << k }
+                }
+                def zh = [] as Set<String>
+                def zf = p.file('src/main/res/values-zh-rCN/strings.xml')
+                if (zf.exists()) {
+                    def m = (stripXml(zf.text) =~ pat)
+                    while (m.find()) { def k = m.group(1)?.trim(); if (k) zh << k }
+                }
+
+                if (en.isEmpty()) { println "  [${p.name}] — 跳过"; return }
+
+                if (zh.isEmpty()) {
+                    println "  [${p.name}] ⚠️ 中文包未建（${en.size()} 条 fallback 英文）"
+                    println "   👉 ./gradlew :${p.name}:generateZhSkeleton"
+                    return
+                }
+
+                def miss = en - zh
+                def orph = zh - en
+                if (miss.isEmpty()) {
+                    println "  [${p.name}] ✅ 已对齐（${en.size()} 条）"
+                } else {
+                    println "  [${p.name}] ⚠️ 漏翻 ${miss.size()} 条"
+                    println "   👉 ./gradlew :${p.name}:generateZhSkeleton"
+                }
+                if (!orph.isEmpty()) {
+                    println "  [${p.name}] ℹ️ 孤儿 ${orph.size()} 条（不影响编译）"
+                }
+            }
+        }
+
+        // ---------- 任务 2：骨架 ----------
+        p.tasks.register('generateZhSkeleton') {
+            group = 'verification'
+            description = "为 ${p.name} 生成中文占位骨架，占位写成 TODO(英文原文)，保留实体声明块"
+            doLast {
+                def pat = ~/<string\s+name\s*=\s*"([^"]+)"[^>]*>/
+                def vd = p.file('src/main/res/values')
+                def files = vd.exists() ? vd.listFiles().findAll { it.name ==~ /strings.*\.xml/ } : []
+                if (files.isEmpty()) { println "  [${p.name}] — 跳过"; return }
+
+                def en = [] as Set<String>
+                def orig = [:]
+                def doctype = null
+                files.each { f ->
+                    def t = stripXml(f.text)
+                    if (doctype == null) doctype = extractDoctype(f.text)
+                    def mk = (t =~ pat); while (mk.find()) { def k = mk.group(1)?.trim(); if (k) en << k }
+                    def nameIdx = 0
+                    while (true) {
+                        def nm = t.indexOf('<string', nameIdx)
+                        if (nm < 0) break
+                        def q1 = t.indexOf('name="', nm)
+                        if (q1 < 0) { nameIdx = nm + 7; continue }
+                        def q2 = t.indexOf('"', q1 + 6)
+                        if (q2 < 0) break
+                        def k = t.substring(q1 + 6, q2).trim()
+                        def gt = t.indexOf('>', q2)
+                        def end = t.indexOf('</string>', gt)
+                        if (k && end > gt) {
+                            def v = t.substring(gt + 1, end).replaceAll(/\s+/, ' ')?.trim()
+                            if (v) orig[k] = v
+                        }
+                        nameIdx = end < 0 ? t.length() : end + 9
+                    }
+                }
+
+                def zDir = p.file('src/main/res/values-zh-rCN')
+                def zf = new File(zDir, 'strings.xml')
+                def done = [] as Set<String>
+                if (zf.exists()) {
+                    def m = (stripXml(zf.text) =~ pat)
+                    while (m.find()) { def k = m.group(1)?.trim(); if (k) done << k }
+                }
+
+                def todo = (en - done).sort()
+                if (todo.isEmpty()) { println "  [${p.name}] ✅ 无待补 key"; return }
+
+                zDir.mkdirs()
+                def lines = zf.exists() ? zf.readLines() : []
+                def hasEnd = lines.any { it?.trim() == '</resources>' }
+                def w = new BufferedWriter(new FileWriter(zf, false))
+
+                if (!hasEnd) {
+                    // 新文件：实体块 + 翻译说明 + 占位
+                    w.writeLine '<?xml version="1.0" encoding="utf-8"?>'
+                    if (doctype != null) { doctype.readLines().each { w.writeLine it }; w.writeLine '' }
+                    w.writeLine '<resources>'
+                    w.writeLine '    <!--'
+                    w.writeLine '    ═══ 翻译说明（AI / 人工通用）═══'
+                    w.writeLine '    1. 把 TODO(英文原文) 里的英文换成简体中文，翻完前保留 TODO(...) 外壳。'
+                    w.writeLine '    2. 必须原样保留占位符：%s %d %1$s %1$d，以及 \\n、单引号、实体引用 &FOO;。'
+                    w.writeLine '        例：Cannot connect to %s → 无法连接到 %s'
+                    w.writeLine '    3. 不要翻译 name="..." 里的 key，只翻标签体。'
+                    w.writeLine '    4. 单引号写成 \\\' 或包 CDATA；别丢标点语义。'
+                    w.writeLine '    5. 语气保持终端工具的简洁 tech 风，按钮词 2~4 字，不做过度本地化。'
+                    w.writeLine '    6. 翻完校验：./gradlew :' + p.name + ':checkMissingTranslations'
+                    w.writeLine '    7. 本说明可随文件提交，也可定稿后整段删掉。'
+                    w.writeLine '    ═══════════════════════════════════'
+                    w.writeLine '    -->'
+                    lines.each { w.writeLine it }
+                } else {
+                    // 已有文件但缺实体块：补到 <resources> 前
+                    def bodyStart = lines.findIndexOf { it?.trim() == '<resources>' }
+                    if (doctype != null && bodyStart >= 0 &&
+                        !(lines[0..bodyStart].any { it?.contains('<!DOCTYPE') })) {
+                        lines[0..bodyStart - 1].each { w.writeLine it }
+                        w.writeLine ''
+                        doctype.readLines().each { w.writeLine it }
+                        w.writeLine ''
+                        w.writeLine '<resources>'
+                        lines[bodyStart + 1..-1].each { w.writeLine it }
+                        w.writeLine '</resources>'; w.close()
+                        println "  [${p.name}] ℹ️ 已补齐 DOCTYPE 实体声明"
+                        return
+                    }
+                    lines[0..-2].each { w.writeLine it }
+                }
+
+                println "  [${p.name}] ➕ 补 ${todo.size()} 条："
+                todo.each { k ->
+                    def o = orig[k] ?: 'EN'
+                    w.writeLine "    <string name=\"${k}\">TODO(${o})</string>"
+                    println "       + $k"
+                }
+                w.writeLine '</resources>'; w.close()
+                println "  [${p.name}] ✓ ${zf.relativePath(p.file('.'))}"
+            }
+        }
+
+        // ---------- assembleDebug 前顺手看一眼，不拦截 ----------
+        p.tasks.configureEach { t ->
+            if (t.name == 'assembleDebug') {
+                t.dependsOn p.tasks.named('checkMissingTranslations')
+            }
+        }
+    }
+}

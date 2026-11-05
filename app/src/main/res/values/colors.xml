@@ -16,4 +16,9 @@
   <color name="snippet_accent">#FF5ee0a0</color>
 <color name="tab_accent">#7FD4E0</color>
 <color name="tab_strip_background">#7FD4E0</color>
+<!-- 80% 黑，越接近 00 越透 -->
+<color name="drawer_bg_semi">#CC000000</color>
+
+<!-- 想透一点就用 #99000000（60%）、#66000000（40%） -->
+
 </resources>

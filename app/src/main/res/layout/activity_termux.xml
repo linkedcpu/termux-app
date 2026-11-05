@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    ★ 左抽屉内的按钮行（settings / 键盘 / 新建）已移除，抽屉现为空白面板。
+    session 切换 / 新建 / 菜单 统一由底部 SessionTabBar + TerminalContextMenu 承担。
+-->
 <com.termux.app.terminal.TermuxActivityRootView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -25,6 +29,7 @@
             android:layout_alignParentTop="true"
             android:layout_above="@+id/terminal_toolbar_view_pager">
 
+            <!-- ★ 主内容：必须保持为 DrawerLayout 的第 0 个 child -->
             <com.termux.view.TerminalView
                 android:id="@+id/terminal_view"
                 android:layout_width="match_parent"
@@ -35,57 +40,21 @@
                 android:scrollbars="vertical"
                 tools:ignore="UnusedAttribute" />
 
+            <!-- ★ 左抽屉：按钮行已删除，仅保留空白面板 -->
             <LinearLayout
                 android:id="@+id/left_drawer"
                 android:layout_width="240dp"
                 android:layout_height="match_parent"
                 android:layout_gravity="start"
-                android:choiceMode="singleChoice"
-                android:divider="@android:color/transparent"
-                android:dividerHeight="0dp"
-                android:descendantFocusability="blocksDescendants"
                 android:orientation="vertical"
-                android:background="?attr/termuxActivityDrawerBackground">
+                android:background="?attr/termuxActivityDrawerBackground"
+                android:paddingTop="8dp">
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <ImageButton
-                        android:id="@+id/settings_button"
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:src="@drawable/ic_settings"
-                        android:background="@null"
-                        android:contentDescription="@string/action_open_settings"
-                        app:tint="?attr/termuxActivityDrawerImageTint" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/toggle_keyboard_button"
-                        style="?android:attr/buttonBarButtonStyle"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/action_toggle_soft_keyboard" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/new_session_button"
-                        style="?android:attr/buttonBarButtonStyle"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/action_new_session" />
-                </LinearLayout>
-
-                <ListView
-                    android:id="@+id/terminal_sessions_list"
-                    android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"
-                    android:layout_gravity="top"
-                    android:choiceMode="singleChoice"
-                    android:longClickable="true" />
+                <!--
+                    ★ settings_button / toggle_keyboard_button / new_session_button 已删除
+                    ★ terminal_sessions_list 此前已删除
+                    抽屉留白，后续可放 帮助 / 关于 / 清空收藏夹 等入口
+                -->
             </LinearLayout>
         </androidx.drawerlayout.widget.DrawerLayout>
 
@@ -98,15 +67,12 @@
             android:visibility="gone" />
     </RelativeLayout>
 
-    <!--
-        ========== 底部栏：左 : 右 = 4 : 1 ==========
-        左侧 4/5 → Session 标签（每格 = 屏幕宽/5）
-        右侧 1/5 → ＋ / ☆ / ⚙  三等分
-    -->
+    <!-- ========== 底部栏：Session 标签在此 ========== -->
     <RelativeLayout
         android:id="@+id/tab_bar_root"
         android:layout_width="match_parent"
-        android:layout_height="20dp"
+        android:layout_height="32dp"
+        android:minHeight="32dp"
         android:background="#141414">
 
         <LinearLayout
@@ -114,7 +80,6 @@
             android:layout_height="match_parent"
             android:orientation="horizontal">
 
-            <!-- ★ 左侧 4 份 -->
             <HorizontalScrollView
                 android:id="@+id/tab_scroll_view"
                 android:layout_width="0dp"
@@ -131,7 +96,6 @@
                     android:gravity="center_vertical" />
             </HorizontalScrollView>
 
-            <!-- ★ 右侧 1 份 -->
             <LinearLayout
                 android:id="@+id/action_group"
                 android:layout_width="0dp"
@@ -147,7 +111,7 @@
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="＋"
-                    android:textSize="16sp"
+                    android:textSize="18sp"
                     android:textColor="#FFFFFF" />
 
                 <TextView
@@ -158,7 +122,7 @@
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="☆"
-                    android:textSize="13sp"
+                    android:textSize="15sp"
                     android:textColor="#FFFFFF" />
 
                 <TextView
@@ -168,8 +132,8 @@
                     android:layout_height="match_parent"
                     android:layout_weight="1"
                     android:gravity="center"
-                    android:text="⚙"
-                    android:textSize="13sp"
+                    android:text="≡"
+                    android:textSize="16sp"
                     android:textColor="#FFFFFF" />
             </LinearLayout>
         </LinearLayout>
