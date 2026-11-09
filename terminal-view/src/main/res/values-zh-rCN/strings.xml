@@ -12,7 +12,24 @@
     7. 本说明可随文件提交，也可定稿后整段删掉。
     ═══════════════════════════════════
     -->
-    <string name="copy_text">TODO(Copy)</string>
-    <string name="paste_text">TODO(Paste)</string>
-    <string name="text_selection_more">TODO(More…)</string>
+    <string name="copy_text">复制</string>
+    <string name="paste_text">粘贴</string>
+    <string name="text_selection_more">更多…</string>
+    <string name="insert_text">插入</string>
+    <string name="translate_text">翻译</string>
+    <string name="bergamot_btn_close">关闭</string>
+    <string name="bergamot_btn_copy">复制</string>
+    <string name="bergamot_btn_insert">插入终端</string>
+    <string name="bergamot_dialog_title_hint">翻译</string>
+    <string name="bergamot_dialog_title_translation">翻译结果</string>
+    <string name="bergamot_err_config_missing">模型配置不存在:\n%1$s</string>
+    <string name="bergamot_err_empty">(无返回结果，可能模型未加载)</string>
+    <string name="bergamot_err_exit">翻译失败 (exit=%1$d):\n%2$s</string>
+    <string name="bergamot_err_failed">翻译失败：%1$s</string>
+    <string name="bergamot_err_not_ready">翻译模块未就绪，请确认 APK 包含 bergamot</string>
+    <string name="bergamot_err_timeout">翻译超时（30s）</string>
+    <string name="bergamot_log_ensure_failed">ensureBergamotInstalled 失败</string>
+    <string name="bergamot_log_tag">Bergamot</string>
+    <string name="bergamot_log_translation_failed">翻译失败</string>
+    <string name="bergamot_log_waitfor_interrupted">waitFor 被中断</string>
 </resources>

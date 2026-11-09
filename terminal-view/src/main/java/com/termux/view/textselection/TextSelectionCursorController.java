@@ -105,8 +105,8 @@ public class TextSelectionCursorController implements CursorController {
                 menu.add(Menu.NONE, ACTION_COPY, Menu.NONE, R.string.copy_text).setShowAsAction(show);
                 menu.add(Menu.NONE, ACTION_PASTE, Menu.NONE, R.string.paste_text)
                         .setEnabled(clipboard != null && clipboard.hasPrimaryClip()).setShowAsAction(show);
-                menu.add(Menu.NONE, ACTION_TRANSLATE, Menu.NONE, "翻译").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
-                menu.add(Menu.NONE, ACTION_INSERT, Menu.NONE, "插入").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+                menu.add(Menu.NONE, ACTION_TRANSLATE, Menu.NONE, R.string.translate_text).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+                menu.add(Menu.NONE, ACTION_INSERT, Menu.NONE, R.string.insert_text).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
                 menu.add(Menu.NONE, ACTION_MORE, Menu.NONE, R.string.text_selection_more);
 
                 return true;

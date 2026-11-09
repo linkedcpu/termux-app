@@ -1,5 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="paste_text">Paste</string>
   <string name="copy_text">Copy</string>
   <string name="text_selection_more">More…</string>
+  <string name="translate_text">translate</string>
+  <string name="insert_text">insert</string>
+    <!-- Dialog titles -->
+    <string name="bergamot_dialog_title_translation">Translation Result</string>
+    <string name="bergamot_dialog_title_hint">Translation</string>
+
+    <!-- Buttons -->
+    <string name="bergamot_btn_copy">Copy</string>
+    <string name="bergamot_btn_insert">Insert to Terminal</string>
+    <string name="bergamot_btn_close">Close</string>
+
+    <!-- Messages (%1$s etc. are placeholders filled in by code) -->
+    <string name="bergamot_err_not_ready">Translation module not ready. Make sure the APK includes bergamot.</string>
+    <string name="bergamot_err_config_missing">Model config not found:\n%1$s</string>
+    <string name="bergamot_err_timeout">Translation timed out (30s)</string>
+    <string name="bergamot_err_exit">Translation failed (exit=%1$d):\n%2$s</string>
+    <string name="bergamot_err_empty">(No result returned, the model may not be loaded)</string>
+    <string name="bergamot_err_failed">Translation failed: %1$s</string>
+
+    <!-- Log -->
+    <string name="bergamot_log_tag">Bergamot</string>
+    <string name="bergamot_log_waitfor_interrupted">waitFor interrupted</string>
+    <string name="bergamot_log_translation_failed">translation failed</string>
+    <string name="bergamot_log_ensure_failed">ensureBergamotInstalled failed</string>
 </resources>

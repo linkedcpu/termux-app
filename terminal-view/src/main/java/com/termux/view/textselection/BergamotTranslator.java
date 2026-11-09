@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
 
+import com.termux.view.R;
 import com.termux.view.TerminalView;
 
 import java.io.BufferedReader;
@@ -29,10 +30,13 @@ import java.util.regex.Pattern;
  * Bergamot 翻译功能的独立封装。
  * 负责：安装/解压 bergamot 资源、创建符号链接、调用 Termux 环境执行翻译、
  * 以及结果展示。从 TextSelectionCursorController 中拆分出来以降低耦合。
+ *
+ * 说明：面向用户的文案、对话框标题/按钮、日志标签已抽取到 res/values/strings.xml；
+ * 逻辑相关的路径、shell 命令等仍保留为代码常量，不做资源化。
  */
 public class BergamotTranslator {
 
-    // ===== Bergamot 配置 =====
+    // ===== Bergamot 配置（逻辑常量，不资源化） =====
     private static final String HOME =
             "/data/data/com.termux/files/home";
     private static final String BERGAMOT_DIR =
@@ -62,7 +66,7 @@ public class BergamotTranslator {
         Context ctx = terminalView.getContext();
 
         if (!ensureBergamotInstalled()) {
-            showDialog(ctx, "翻译模块未就绪，请确认 APK 包含 bergamot");
+            showDialog(ctx, ctx.getString(R.string.bergamot_err_not_ready));
             return;
         }
 
@@ -73,7 +77,9 @@ public class BergamotTranslator {
                 String configFile = toChinese ? "zhen.yml" : "enzh.yml";
                 File config = new File(MODELS_DIR + "/" + (toChinese ? "zhen" : "enzh"), configFile);
                 if (!config.exists()) {
-                    showDialog(ctx, "模型配置不存在:\n" + config.getAbsolutePath());
+                    showDialog(ctx, ctx.getString(
+                            R.string.bergamot_err_config_missing,
+                            config.getAbsolutePath()));
                     return;
                 }
 
@@ -116,32 +122,35 @@ public class BergamotTranslator {
                 try {
                     finished = process.waitFor(30, TimeUnit.SECONDS);
                 } catch (InterruptedException ie) {
-                    Log.e("Bergamot", "waitFor interrupted", ie);
+                    Log.e(ctx.getString(R.string.bergamot_log_tag),
+                            ctx.getString(R.string.bergamot_log_waitfor_interrupted), ie);
                 }
 
                 if (!finished) {
                     process.destroy();
-                    showDialog(ctx, "翻译超时（30s）");
+                    showDialog(ctx, ctx.getString(R.string.bergamot_err_timeout));
                     return;
                 }
 
                 int exitCode = process.exitValue();
                 if (exitCode != 0) {
-                    showDialog(ctx, "翻译失败 (exit=" + exitCode + "):\n" + sb.toString());
+                    showDialog(ctx, ctx.getString(
+                            R.string.bergamot_err_exit, exitCode, sb.toString()));
                     return;
                 }
 
                 final String translation = sb.toString().trim();
                 if (translation.isEmpty()) {
-                    showDialog(ctx, "(无返回结果，可能模型未加载)");
+                    showDialog(ctx, ctx.getString(R.string.bergamot_err_empty));
                     return;
                 }
 
                 showResultDialog(ctx, translation);
 
             } catch (Exception e) {
-                Log.e("Bergamot", "translation failed", e);
-                showDialog(ctx, "翻译失败：" + e.getMessage());
+                Log.e(ctx.getString(R.string.bergamot_log_tag),
+                        ctx.getString(R.string.bergamot_log_translation_failed), e);
+                showDialog(ctx, ctx.getString(R.string.bergamot_err_failed, e.getMessage()));
             } finally {
                 if (process != null) {
                     try {
@@ -170,7 +179,8 @@ public class BergamotTranslator {
             return bin.exists() && bin.canExecute();
 
         } catch (Exception e) {
-            Log.e("Bergamot", "ensureBergamotInstalled failed", e);
+            Log.e(ctx.getString(R.string.bergamot_log_tag),
+                    ctx.getString(R.string.bergamot_log_ensure_failed), e);
             return false;
         }
     }
@@ -208,19 +218,19 @@ public class BergamotTranslator {
     private void showResultDialog(Context ctx, final String translation) {
         new Handler(Looper.getMainLooper()).post(() ->
                 new AlertDialog.Builder(ctx)
-                        .setTitle("翻译结果")
+                        .setTitle(R.string.bergamot_dialog_title_translation)
                         .setMessage(translation)
-                        .setPositiveButton("复制", (d, w) -> {
+                        .setPositiveButton(R.string.bergamot_btn_copy, (d, w) -> {
                             ClipboardManager cm = (ClipboardManager)
                                     ctx.getSystemService(Context.CLIPBOARD_SERVICE);
                             cm.setText(translation);
                         })
-                        .setNeutralButton("插入终端", (d, w) -> {
+                        .setNeutralButton(R.string.bergamot_btn_insert, (d, w) -> {
                             if (terminalView.mTermSession != null) {
                                 terminalView.mTermSession.write(translation);
                             }
                         })
-                        .setNegativeButton("关闭", null)
+                        .setNegativeButton(R.string.bergamot_btn_close, null)
                         .show()
         );
     }
@@ -228,9 +238,9 @@ public class BergamotTranslator {
     private void showDialog(Context ctx, final String message) {
         new Handler(Looper.getMainLooper()).post(() ->
                 new AlertDialog.Builder(ctx)
-                        .setTitle("翻译")
+                        .setTitle(R.string.bergamot_dialog_title_hint)
                         .setMessage(message)
-                        .setPositiveButton("关闭", null)
+                        .setPositiveButton(R.string.bergamot_btn_close, null)
                         .show()
         );
     }
