@@ -215,7 +215,7 @@ task downloadBootstraps() {
             downloadBootstrap("aarch64", "913609d439415c828c5640be1b0561467e539cb1c7080662decaaca2fb4820e7", version)
             downloadBootstrap("arm", "26bfb45304c946170db69108e5eb6e3641aad751406ce106c80df80cad2eccf8", version)
             downloadBootstrap("i686", "46dcfeb5eef67ba765498db9fe4c50dc4690805139aa0dd141a9d8ee0693cd27", version)
-            downloadBootstrap("x86_64", "615b590679ee6cd885b7fd2ff9473c845e920f9b422f790bb158c63fe42b8481", version)
+            downloadBootstrap("x86_64", "615b590679ee8cd885b7fd2ff9473c845e920f9b422f790bb158c63fe42b8481", version)
         } else {
             throw new GradleException("Unsupported TERMUX_PACKAGE_VARIANT \"" + packageVariant + "\"")
         }
@@ -232,29 +232,31 @@ afterEvaluate {
 
 // ==================== Bergamot 构建链 ====================
 
-// ---------- 路径约定 ----------
-def bergamotBuildBin = file("../3rd-party/bergamot-translator/build/app/bergamot")
-def bergamotBuildSha = file("../3rd-party/bergamot-translator/build/app/bergamot.sha256")
-def bergamotAssetBin = file("src/main/assets/bergamot/bin/bergamot")
-def bergamotAssetSha = file("src/main/assets/bergamot/bin/bergamot.sha256")
+// ---------- 路径约定（挂到 project.ext，避免 onlyIf 闭包里解析为 project 属性失败） ----------
+ext {
+    bergamotBuildBin = file("../3rd-party/bergamot-translator/build/app/bergamot")
+    bergamotBuildSha = file("../3rd-party/bergamot-translator/build/app/bergamot.sha256")
+    bergamotAssetBin = file("src/main/assets/bergamot/bin/bergamot")
+    bergamotAssetSha = file("src/main/assets/bergamot/bin/bergamot.sha256")
+}
 
 /**
  * assets 里已有匹配的 bergamot 产物才返回 true。
- * ★ 整段包在 try/catch 里：任何 IO / 空指针 / 编码异常都当“没命中”，
- *   直接回落到编译，绝不让异常漏到 onlyIf 外层（否则 Gradle 报
- *   "Could not evaluate spec for onlyIf"，也就是你刚踩的那个错）。
+ * 只捕获预期内的异常（属性缺失 / IO），其余异常照常抛出，避免掩盖真实错误。
  */
 def isBergamotUpToDate() {
     try {
-        if (!bergamotAssetBin.exists() || !bergamotAssetSha.exists()) return false
-        if (bergamotAssetBin.length() <= 0) return false
-        def expected = bergamotAssetSha.text?.trim()
+        File assetBin = project.ext.bergamotAssetBin as File
+        File assetSha = project.ext.bergamotAssetSha as File
+        if (!assetBin.exists() || !assetSha.exists()) return false
+        if (assetBin.length() <= 0) return false
+        def expected = assetSha.text?.trim()
         if (!expected) return false
-        def actual = sha256(bergamotAssetBin)
+        def actual = sha256(assetBin)
         if (actual == null || actual != expected) return false
         logger.quiet("  ✓ bergamot asset up-to-date (${actual}), skipping build & copy")
         return true
-    } catch (Exception e) {
+    } catch (groovy.lang.MissingPropertyException | java.io.IOException e) {
         logger.quiet("  ⚠ bergamot cache check failed (${e.message}), will rebuild")
         return false
     }
@@ -265,7 +267,7 @@ task buildBergamot(type: Exec) {
     group = "bergamot"
     description = "Build bergamot-translator (skipped if asset already matches)"
 
-    // ★ 闭包内调用，异常已被上面吞掉，这里只会收到 true/false
+    // ★ 闭包内调用，异常已被上面收窄捕获，这里只会收到 true/false
     onlyIf { !isBergamotUpToDate() }
 
     def termuxPrefix = System.getenv("PREFIX")
@@ -273,8 +275,8 @@ task buildBergamot(type: Exec) {
     commandLine "$termuxPrefix/bin/bash",
             "${project.rootDir}/3rd-party/bergamot-translator/termux_build_bergamot.sh"
 
-    outputs.file bergamotBuildBin
-    outputs.file bergamotBuildSha
+    outputs.file project.ext.bergamotBuildBin as File
+    outputs.file project.ext.bergamotBuildSha as File
 }
 
 // ---------- 2. 拷贝二进制 + hash 到 assets ----------
@@ -286,17 +288,17 @@ task copyBergamot {
     onlyIf { !isBergamotUpToDate() }
 
     doLast {
+        File binSrc = project.ext.bergamotBuildBin as File
+        File shaSrc = project.ext.bergamotBuildSha as File
+        File binDest = project.ext.bergamotAssetBin as File
+        File shaDest = project.ext.bergamotAssetSha as File
+
         def destDir = file("src/main/assets/bergamot/bin")
         destDir.mkdirs()
 
-        def binSrc = bergamotBuildBin
         if (!binSrc.exists()) {
             throw new GradleException("bergamot binary not found: ${binSrc}")
         }
-
-        def binDest = bergamotAssetBin
-        def shaSrc  = bergamotBuildSha
-        def shaDest = bergamotAssetSha
 
         if (!binDest.exists() || sha256(binSrc) != sha256(binDest)) {
             binDest.withOutputStream { os ->
@@ -575,11 +577,12 @@ afterEvaluate {
 }
 
 // ---------- 6. 清理 ----------
-task cleanBergamot {
-    description = "Removes all bergamot assets (bin + models) and cache"
-    doLast {
-        delete file("src/main/assets/bergamot")
-        delete file("${buildDir}/bergamot_models_cache")
-        println "✓ assets/bergamot/ + cache cleared"
-    }
+task cleanBergamot(type: Delete) {
+    group = "bergamot"
+    description = "Removes all bergamot assets (bin + models), build outputs and cache"
+    delete file("src/main/assets/bergamot")
+    delete file("${buildDir}/bergamot_models_cache")
+    // 整个 bergamot-translator 的构建输出目录，可安全重建
+    delete file("../3rd-party/bergamot-translator/build")
+    doLast { println "✓ bergamot assets + build outputs + cache cleared" }
 }

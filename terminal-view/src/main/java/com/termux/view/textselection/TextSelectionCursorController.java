@@ -4,16 +4,13 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Rect;
 import android.os.Build;
-import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
-import android.util.Log;
 import android.view.ActionMode;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 
@@ -22,25 +19,11 @@ import com.termux.terminal.WcWidth;
 import com.termux.view.R;
 import com.termux.view.TerminalView;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
-
 public class TextSelectionCursorController implements CursorController {
 
     private final TerminalView terminalView;
     private final TextSelectionHandleView mStartHandle, mEndHandle;
+    private final BergamotTranslator mBergamotTranslator;
     private String mStoredSelectedText;
     private boolean mIsSelectingText = false;
     private long mShowStartTime = System.currentTimeMillis();
@@ -56,26 +39,12 @@ public class TextSelectionCursorController implements CursorController {
     public static final int ACTION_TRANSLATE = 4;
     public static final int ACTION_INSERT = 5;
 
-    // ===== Bergamot 配置 =====
-    private static final String HOME =
-            "/data/data/com.termux/files/home";
-    private static final String BERGAMOT_DIR =
-            HOME + "/.local/share/bergamot";
-    private static final String BERGAMOT_BIN =
-            BERGAMOT_DIR + "/bin/bergamot";
-    private static final String BERGAMOT_SYMLINK =
-            "/data/data/com.termux/files/usr/bin/bergamot";
-    private static final String MODELS_DIR =
-            BERGAMOT_DIR + "/models";
-
-    private static final Pattern CHINESE_PATTERN =
-            Pattern.compile("[\\u4e00-\\u9fff\\u3400-\\u4dbf]");
-
     public TextSelectionCursorController(TerminalView terminalView) {
         this.terminalView = terminalView;
         mStartHandle = new TextSelectionHandleView(terminalView, this, TextSelectionHandleView.LEFT);
         mEndHandle = new TextSelectionHandleView(terminalView, this, TextSelectionHandleView.RIGHT);
         mHandleHeight = Math.max(mStartHandle.getHandleHeight(), mEndHandle.getHandleHeight());
+        mBergamotTranslator = new BergamotTranslator(terminalView);
     }
 
     @Override
@@ -176,14 +145,7 @@ public class TextSelectionCursorController implements CursorController {
                     case ACTION_TRANSLATE:
                         String text = getSelectedText();
                         if (text != null && !text.trim().isEmpty()) {
-                            File bin = new File(BERGAMOT_BIN);
-                            if (!bin.exists() || !bin.canExecute()) {
-                                new Handler(Looper.getMainLooper()).post(() ->
-                                        Toast.makeText(terminalView.getContext(),
-                                                "首次翻译需初始化，请稍候...", Toast.LENGTH_SHORT).show()
-                                );
-                            }
-                            translateWithBergamot(text.trim());
+                            mBergamotTranslator.translate(text.trim());
                         }
                         terminalView.stopTextSelectionMode();
                         break;
@@ -250,189 +212,6 @@ public class TextSelectionCursorController implements CursorController {
                 outRect.set(x1, top, x2, bottom);
             }
         }, ActionMode.TYPE_FLOATING);
-    }
-
-    // ===== Bergamot 相关 =====
-
-    private boolean ensureBergamotInstalled() {
-        Context ctx = terminalView.getContext();
-        File bin = new File(BERGAMOT_BIN);
-
-        try {
-            if (bin.exists() && bin.canExecute()) {
-                ensureSymlink();
-                return true;
-            }
-
-            File destDir = new File(BERGAMOT_DIR);
-            extractAssetDir(ctx.getAssets(), "bergamot", destDir);
-            bin.setExecutable(true, false);
-            ensureSymlink();
-            return bin.exists() && bin.canExecute();
-
-        } catch (Exception e) {
-            Log.e("Bergamot", "ensureBergamotInstalled failed", e);
-            return false;
-        }
-    }
-
-    private void ensureSymlink() {
-        File symlink = new File(BERGAMOT_SYMLINK);
-        if (!symlink.exists()) {
-            try {
-                new ProcessBuilder("ln", "-sf", BERGAMOT_BIN, BERGAMOT_SYMLINK)
-                        .start().waitFor();
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    private void extractAssetDir(android.content.res.AssetManager am,
-                                String assetPath, File destDir) throws Exception {
-        String[] list = am.list(assetPath);
-        if (list == null || list.length == 0) {
-            destDir.getParentFile().mkdirs();
-            try (InputStream is = am.open(assetPath);
-                 FileOutputStream fos = new FileOutputStream(destDir)) {
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = is.read(buf)) != -1) fos.write(buf, 0, n);
-            }
-            return;
-        }
-        destDir.mkdirs();
-        for (String f : list) {
-            extractAssetDir(am, assetPath + "/" + f, new File(destDir, f));
-        }
-    }
-
-    private boolean isChinese(String text) {
-        return CHINESE_PATTERN.matcher(text).find();
-    }
-
-    private void translateWithBergamot(String text) {
-        Context ctx = terminalView.getContext();
-
-        if (!ensureBergamotInstalled()) {
-            showDialog(ctx, "翻译模块未就绪，请确认 APK 包含 bergamot");
-            return;
-        }
-
-        new Thread(() -> {
-            Process process = null;
-            try {
-                boolean toChinese = isChinese(text);
-                String configFile = toChinese ? "zhen.yml" : "enzh.yml";
-                File config = new File(MODELS_DIR + "/" + (toChinese ? "zhen" : "enzh"), configFile);
-                if (!config.exists()) {
-                    showDialog(ctx, "模型配置不存在:\n" + config.getAbsolutePath());
-                    return;
-                }
-
-                // ✅ 核心改动：login -c 走 Termux 执行环境
-                String innerCmd = "exec bergamot --model-config-paths '"
-                        + config.getAbsolutePath().replace("'", "'\\''") + "'";
-
-                List<String> cmd = new ArrayList<>();
-                cmd.add("/data/data/com.termux/files/usr/bin/login");
-                cmd.add("-c");
-                cmd.add(innerCmd);
-
-                ProcessBuilder pb = new ProcessBuilder(cmd);
-                Map<String, String> env = pb.environment();
-                env.clear();
-                env.put("HOME", "/data/data/com.termux/files/home");
-                env.put("PATH", "/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin");
-                pb.directory(new File("/data/data/com.termux/files/home"));
-                pb.redirectErrorStream(true);
-
-                process = pb.start();
-
-                // 往 stdin 写待翻译文本
-                try (PrintWriter pw = new PrintWriter(
-                        new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8), true)) {
-                    pw.println(text);
-                }
-
-                // 读输出
-                StringBuilder sb = new StringBuilder();
-                try (BufferedReader br = new BufferedReader(
-                        new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = br.readLine()) != null) {
-                        sb.append(line).append('\n');
-                    }
-                }
-
-                boolean finished = false;
-                try {
-                    finished = process.waitFor(30, TimeUnit.SECONDS);
-                } catch (InterruptedException ie) {
-                    Log.e("Bergamot", "waitFor interrupted", ie);
-                }
-
-                if (!finished) {
-                    process.destroy();
-                    showDialog(ctx, "翻译超时（30s）");
-                    return;
-                }
-
-                int exitCode = process.exitValue();
-                if (exitCode != 0) {
-                    showDialog(ctx, "翻译失败 (exit=" + exitCode + "):\n" + sb.toString());
-                    return;
-                }
-
-                final String translation = sb.toString().trim();
-                if (translation.isEmpty()) {
-                    showDialog(ctx, "(无返回结果，可能模型未加载)");
-                    return;
-                }
-
-                showResultDialog(ctx, translation, text);
-
-            } catch (Exception e) {
-                Log.e("Bergamot", "translation failed", e);
-                showDialog(ctx, "翻译失败：" + e.getMessage());
-            } finally {
-                if (process != null) {
-                    try {
-                        process.destroy();
-                    } catch (Exception ignored) {
-                    }
-                }
-            }
-        }).start();
-    }
-
-    private void showResultDialog(Context ctx, final String translation, final String original) {
-        new Handler(Looper.getMainLooper()).post(() ->
-                new android.app.AlertDialog.Builder(ctx)
-                        .setTitle("翻译结果")
-                        .setMessage(translation)
-                        .setPositiveButton("复制", (d, w) -> {
-                            ClipboardManager cm = (ClipboardManager)
-                                    ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-                            cm.setText(translation);
-                        })
-                        .setNeutralButton("插入终端", (d, w) -> {
-                            if (terminalView.mTermSession != null) {
-                                terminalView.mTermSession.write(translation);
-                            }
-                        })
-                        .setNegativeButton("关闭", null)
-                        .show()
-        );
-    }
-
-    private void showDialog(Context ctx, final String message) {
-        new Handler(Looper.getMainLooper()).post(() ->
-                new android.app.AlertDialog.Builder(ctx)
-                        .setTitle("翻译")
-                        .setMessage(message)
-                        .setPositiveButton("关闭", null)
-                        .show()
-        );
     }
 
     @Override
