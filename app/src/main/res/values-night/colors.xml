@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="drawer_bg">#1e1f22</color>
+    <color name="drawer_text_primary">#e6e6e6</color>
+    <color name="drawer_text_secondary">#9a9a9a</color>
+    <color name="drawer_accent">#5cc97a</color>
+</resources>

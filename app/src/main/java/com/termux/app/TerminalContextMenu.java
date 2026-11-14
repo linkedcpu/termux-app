@@ -15,8 +15,10 @@ import com.termux.view.TerminalView;
 /**
  * 终端长按菜单：菜单长什么样 + 点了做什么，全部在这里。
  *
- * <p>★ 本类不持有 Context、不自己 startActivity，所有页面跳转委托给 NavigationHandle， 因此彻底避免 "Calling startActivity()
- * from outside of an Activity context requires FLAG_ACTIVITY_NEW_TASK" 这类崩溃。
+ * <p>★ 本类不持有 Context、不自己 startActivity，所有页面跳转委托给 NavigationHandle，
+ * 因此彻底避免 "Calling startActivity() from outside of an Activity context
+ * requires FLAG_ACTIVITY_NEW_TASK" 这类崩溃。
+ * <p>★ dispatchById(int) 供抽屉 DrawerPanel 复用同一套动作，逻辑只有一份。
  */
 public final class TerminalContextMenu {
 
@@ -41,7 +43,7 @@ public final class TerminalContextMenu {
     private final TabBarHandle tabBar;
     private final SessionHandle sessions;
     private final StylingHandle styling;
-    private final NavigationHandle nav; // ★ 新增：所有页面跳转走这里
+    private final NavigationHandle nav;
     private final SessionSupplier currentSession;
 
     public TerminalContextMenu(
@@ -154,10 +156,64 @@ public final class TerminalContextMenu {
                 return true;
             case ID_HELP:
                 nav.openHelp();
-                return true; // ★ 交给 Activity
+                return true;
             case ID_SETTINGS:
                 nav.openSettings();
-                return true; // ★ 交给 Activity
+                return true;
+            case ID_REPORT:
+                viewClient.reportIssueFromTranscript();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * ★ 供抽屉 DrawerPanel 按菜单 ID 直接触发同一套动作。
+     * 内部把 ID 转成对 dispatch 的等价调用，不重复实现逻辑。
+     */
+    public boolean dispatchById(int id) {
+        TerminalSession cur = currentSession.get();
+        switch (id) {
+            case ID_SELECT_URL:
+                viewClient.showUrlSelection();
+                return true;
+            case ID_SHARE_TRANSCRIPT:
+                viewClient.shareSessionTranscript();
+                return true;
+            case ID_SHARE_SELECTED:
+                viewClient.shareSelectedText();
+                return true;
+            case ID_AUTOFILL_USER:
+                terminalView.requestAutoFillUsername();
+                return true;
+            case ID_AUTOFILL_PW:
+                terminalView.requestAutoFillPassword();
+                return true;
+            case ID_RESET:
+                reset(cur);
+                return true;
+            case ID_KILL:
+                kill(cur);
+                return true;
+            case ID_TOGGLE_EXTRA_KEYS:
+                extraKeys.toggle();
+                return true;
+            case ID_TOGGLE_TAB_BAR:
+                tabBar.toggle();
+                return true;
+            case ID_STYLING:
+                styling.open();
+                return true;
+            case ID_KEEP_SCREEN:
+                toggleKeepScreenOn();
+                return true;
+            case ID_HELP:
+                nav.openHelp();
+                return true;
+            case ID_SETTINGS:
+                nav.openSettings();
+                return true;
             case ID_REPORT:
                 viewClient.reportIssueFromTranscript();
                 return true;
@@ -169,13 +225,12 @@ public final class TerminalContextMenu {
     private void reset(@Nullable TerminalSession s) {
         if (s == null) return;
         s.reset();
-        nav.toast(R.string.msg_terminal_reset, true); // ★ toast 也走 handle
+        nav.toast(R.string.msg_terminal_reset, true);
         sessions.onReset();
     }
 
     private void kill(@Nullable TerminalSession s) {
         if (s == null) return;
-        // ★ AlertDialog 必须带 Activity 主题的 context：由 nav 提供
         nav.showKillConfirm(s);
     }
 
@@ -206,17 +261,14 @@ public final class TerminalContextMenu {
     }
 
     public interface StylingHandle {
-        /** 打开配色/字体，由 Activity 实现（它手里有 Context + 弹窗逻辑） */
         void open();
     }
 
-    /** ★ 新增：所有「跳页面 / 弹系统窗 / 吐司」的统一出口。 实现方是 TermuxActivity，天生是 Activity context，绝不会再缺 NEW_TASK。 */
     public interface NavigationHandle {
         void openHelp();
 
         void openSettings();
 
-        /** 杀进程二次确认弹窗，Dialog 由 Activity context 弹出 */
         void showKillConfirm(@NonNull TerminalSession session);
 
         void toast(int resId, boolean longDur);

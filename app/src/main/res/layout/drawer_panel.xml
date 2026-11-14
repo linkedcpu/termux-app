@@ -1,8 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    ★ 左抽屉面板（独立）
-    已移除：测试按钮、清空收藏夹
--->
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
@@ -10,8 +6,7 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:paddingTop="12dp"
-    android:paddingHorizontal="12dp"
-    android:background="?attr/termuxActivityDrawerBackground"
+    android:background="@color/drawer_bg"
     tools:ignore="UnusedAttribute">
 
     <TextView
@@ -21,23 +16,45 @@
         android:text="Termux"
         android:textSize="16sp"
         android:textStyle="bold"
-        android:textColor="?android:attr/textColorPrimary"
+        android:textColor="@color/drawer_text_primary"
+        android:paddingHorizontal="12dp"
         android:paddingBottom="10dp" />
 
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:background="#33FFFFFF"
+        android:background="@color/drawer_text_secondary"
         android:alpha="0.25" />
 
-    <!-- ★ 菜单项由 DrawerPanel.buildMenu() 装配 -->
-    <LinearLayout
-        android:id="@+id/drawer_menu_container"
+    <com.termux.app.terminal.InterceptHorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:overScrollMode="ifContentScrolls"
+        tools:ignore="UnusedAttribute">
+
+        <LinearLayout
+            android:id="@+id/drawer_tab_container"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="8dp" />
+
+    </com.termux.app.terminal.InterceptHorizontalScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/drawer_text_secondary"
+        android:alpha="0.25" />
+
+    <FrameLayout
+        android:id="@+id/drawer_content"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:orientation="vertical"
-        android:paddingTop="8dp" />
+        android:padding="12dp" />
 
     <TextView
         android:id="@+id/drawer_version"
@@ -45,7 +62,8 @@
         android:layout_height="wrap_content"
         android:gravity="center"
         android:textSize="11sp"
-        android:textColor="#888888"
+        android:textColor="@color/drawer_text_secondary"
         android:padding="8dp"
         tools:text="Termux · v0.1" />
+
 </LinearLayout>

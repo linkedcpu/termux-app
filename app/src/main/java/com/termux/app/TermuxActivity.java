@@ -68,7 +68,7 @@ import org.json.JSONObject;
 /**
  * Termux 主界面
  *
- * <p>★ 左抽屉 = 独立 DrawerPanel（菜单 + 测试按钮）
+ * <p>★ 左抽屉 = 独立 DrawerPanel（菜单 + 收藏夹 + 更多）
  * <p>★ 底部   = SessionTabBar（标签 / ＋ / ☆ / ≡）
  * <p>★ 长按   = TerminalContextMenu
  */
@@ -98,7 +98,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private SessionTabBar mSessionTabBar;
     private SnippetManager mSnippetMgr;
     private View mSnippetPanel;
-    private DrawerPanel mDrawerPanel;                       // ★
+    private DrawerPanel mDrawerPanel;
     private TerminalContextMenu mContextMenu;
 
     private static final String ARG_TERMINAL_TOOLBAR_TEXT_INPUT = "terminal_toolbar_text_input";
@@ -172,10 +172,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setTermuxTerminalViewAndClients();
 
         attachInlineSnippetPanel();
-        setupBottomSnippetButton();
 
         setTerminalToolbarView(savedInstanceState);
-        installDrawerPanel();                                 // ★
+        installDrawerPanel();
+        setupBottomSnippetButton();   // ☆ → 抽屉·收藏夹
+        setupDrawerButtons();         // ≡ → 抽屉·更多
 
         mSessionTabBar =
                 new SessionTabBar(
@@ -419,8 +420,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         leftDrawer.removeAllViews();
 
         mDrawerPanel = new DrawerPanel(this);
-        // ★ 想换测试按钮行为就取消下一行注释：
-        // mDrawerPanel.setTestAction(() -> { showToast("测试按钮 ✔", false); return true; });
 
         LinearLayout.LayoutParams lp =
                 new LinearLayout.LayoutParams(
@@ -429,14 +428,64 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         leftDrawer.addView(mDrawerPanel.getView(), lp);
     }
 
+    /** ★ 主题联动：抽屉 / 收藏夹 / 标签栏一起刷新 */
+    private void applyThemeToUi() {
+        if (mDrawerPanel != null) mDrawerPanel.reloadTheme();
+        if (mSnippetMgr != null && mSnippetMgr.isExpanded()) mSnippetMgr.reloadTheme();
+        if (mSessionTabBar != null) mSessionTabBar.render();
+    }
+
+    /** 供 DrawerPanel 切主题后触发统一套色 */
+    public void applyThemeToUiFromDrawer() {
+        applyThemeToUi();
+    }
+
     /* ========================================================= */
-    /* ★ 内嵌收藏夹                                               */
+    /* ★ Session 栏 ☆ / ≡ → 打开抽屉并跳 Tab                     */
+    /* ========================================================= */
+
+    /** ☆ = 打开抽屉并跳到「收藏夹」 */
+    private void setupBottomSnippetButton() {
+        View star = findViewById(R.id.snippet_button);
+        if (star == null) {
+            Logger.logWarn(LOG_TAG, "snippet_button 未找到，收藏夹按钮不生效");
+            return;
+        }
+        star.setOnClickListener(v -> openDrawerTab("snippet"));
+    }
+
+    /** ≡ = 打开抽屉并跳到「更多」 */
+    private void setupDrawerButtons() {
+        View mb = findViewById(R.id.drawer_menu_button);
+        if (mb != null) mb.setOnClickListener(v -> openDrawerTab("more"));
+    }
+
+    /** 打开左抽屉并切到指定 Tab；抽屉未就绪时兜底只开抽屉 */
+    private void openDrawerTab(@NonNull String tabKey) {
+        DrawerLayout drawer = getDrawer();
+        if (drawer == null) {
+            Logger.logWarn(LOG_TAG, "DrawerLayout 未找到，无法打开抽屉");
+            return;
+        }
+        drawer.openDrawer(Gravity.LEFT);
+        if (mDrawerPanel != null) {
+            mDrawerPanel.openTab(tabKey);
+        } else {
+            Logger.logWarn(LOG_TAG, "DrawerPanel 未就绪，tabKey=" + tabKey);
+        }
+    }
+
+    /* ========================================================= */
+    /* ★ 内嵌收藏夹（仅由抽屉的「收藏夹」Tab 使用）                */
     /* ========================================================= */
 
     @SuppressWarnings({"rawtypes", "unchecked"})
     private void attachInlineSnippetPanel() {
         TerminalView tv = findViewById(R.id.terminal_view);
-        if (tv == null) return;
+        if (tv == null) {
+            Logger.logWarn(LOG_TAG, "terminal_view 未找到，收藏夹不挂载");
+            return;
+        }
 
         mSnippetMgr = new SnippetManager(this);
 
@@ -461,17 +510,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         parent.addView(wrapper, idx, tv.getLayoutParams());
         mSnippetMgr.collapse();
-    }
-
-    private void setupBottomSnippetButton() {
-        View star = findViewById(R.id.snippet_button);
-        if (star == null) return;
-        star.setOnClickListener(
-                v -> {
-                    if (mSnippetMgr == null) return;
-                    if (mSnippetMgr.isExpanded()) mSnippetMgr.collapse();
-                    else mSnippetMgr.expand();
-                });
     }
 
     /* ========================================================= */
@@ -587,31 +625,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             out.putString(ARG_TERMINAL_TOOLBAR_TEXT_INPUT, et.getText().toString());
     }
 
-    private void setupDrawerButtons() {
-        View mb = findViewById(R.id.drawer_menu_button);
-        if (mb != null)
-            mb.setOnClickListener(
-                    v -> {
-                        getDrawer().closeDrawers();
-                        if (getCurrentSession() == null) {
-                            Toast.makeText(this, "还没有会话", Toast.LENGTH_SHORT).show();
-                            return;
-                        }
-                        mTerminalView.post(() -> openContextMenu(mTerminalView));
-                    });
-
-        View sb = findViewById(R.id.snippet_button);
-        if (sb != null)
-            sb.setOnClickListener(
-                    v -> {
-                        getDrawer().closeDrawers();
-                        if (mSnippetMgr != null) {
-                            if (mSnippetMgr.isExpanded()) mSnippetMgr.collapse();
-                            else mSnippetMgr.expand();
-                        }
-                    });
-    }
-
     /* ========================================================= */
     /* ★ 桥接方法                                                */
     /* ========================================================= */
@@ -624,25 +637,18 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         mTermuxTerminalSessionActivityClient.addNewSession(failsafe, name);
     }
 
-    /**
-     * ★ 严格对齐 TextInputDialogUtils.textInput 的 10 参签名：
-     *    (Activity, titleRes, initialText, okRes, onOk,
-     *     neuRes, onNeu, negRes, onNeg, onDismiss)
-     */
     public void showNamedSessionDialog(boolean failsafe) {
         TextInputDialogUtils.textInput(
-                /* activity      */ TermuxActivity.this,
-                /* titleRes      */ R.string.title_create_named_session,
-                /* initialText   */ null,
-                /* okRes         */ R.string.action_create_named_session_confirm,
-                /* onOk          */ t ->
-                        mTermuxTerminalSessionActivityClient.addNewSession(failsafe, t),
-                /* neuRes        */ R.string.action_new_session_failsafe,
-                /* onNeu         */ t ->
-                        mTermuxTerminalSessionActivityClient.addNewSession(true, t),
-                /* negRes        */ -1,
-                /* onNeg         */ null,
-                /* onDismiss     */ null);
+                TermuxActivity.this,
+                R.string.title_create_named_session,
+                null,
+                R.string.action_create_named_session_confirm,
+                t -> mTermuxTerminalSessionActivityClient.addNewSession(failsafe, t),
+                R.string.action_new_session_failsafe,
+                t -> mTermuxTerminalSessionActivityClient.addNewSession(true, t),
+                -1,
+                null,
+                null);
     }
 
     public void resetSession(TerminalSession session) {
@@ -711,6 +717,17 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                             });
                 },
                 10);
+    }
+
+    /** 供 DrawerPanel「更多」页触发终端长按菜单的同一套动作 */
+    public boolean dispatchContextMenuAction(int id) {
+        if (mContextMenu == null) return false;
+        return mContextMenu.dispatchById(id);
+    }
+
+    /** 供 DrawerPanel 判断当前是否有会话 */
+    public boolean hasCurrentSession() {
+        return getCurrentSession() != null;
     }
 
     /* ========================================================= */
@@ -955,6 +972,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 case TERMUX_ACTIVITY.ACTION_REQUEST_PERMISSIONS:
                     requestStoragePermission(false);
                     break;
+                default:
+                    break;
             }
         }
     }
@@ -975,7 +994,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (mTermuxTerminalSessionActivityClient != null)
             mTermuxTerminalSessionActivityClient.onReloadActivityStyling();
         if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.onReloadActivityStyling();
+
+        applyThemeToUi();
         if (mSessionTabBar != null) mSessionTabBar.render();
+
         if (recreate) {
             Logger.logDebug(LOG_TAG, "Recreating activity");
             recreate();
@@ -996,12 +1018,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onBackPressed() {
         if (mSessionTabBar != null && mSessionTabBar.onBackPressed()) return;
+        if (getDrawer().isDrawerOpen(Gravity.LEFT)) {
+            getDrawer().closeDrawers();
+            return;
+        }
         if (mSnippetMgr != null && mSnippetMgr.isExpanded()) {
             mSnippetMgr.collapse();
             return;
         }
-        if (getDrawer().isDrawerOpen(Gravity.LEFT)) getDrawer().closeDrawers();
-        else finishActivityIfNotFinishing();
+        finishActivityIfNotFinishing();
     }
 
     public void finishActivityIfNotFinishing() {

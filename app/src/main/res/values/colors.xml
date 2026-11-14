@@ -21,4 +21,11 @@
 
 <!-- 想透一点就用 #99000000（60%）、#66000000（40%） -->
 
+
+    <color name="drawer_bg">#f7f7f5</color>
+    <color name="drawer_text_primary">#1f2328</color>
+    <color name="drawer_text_secondary">#8a8f95</color>
+    <color name="drawer_accent">#3a8b52</color>
+
+
 </resources>
