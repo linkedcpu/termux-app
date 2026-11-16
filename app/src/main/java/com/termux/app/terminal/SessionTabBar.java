@@ -1,7 +1,7 @@
 package com.termux.app.terminal;
 
-import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
@@ -17,6 +17,8 @@ import androidx.appcompat.app.AlertDialog;
 
 import com.termux.R;
 import com.termux.app.TermuxActivity;
+import com.termux.app.terminal.theme.Theme;
+import com.termux.app.terminal.theme.ThemeStore;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
@@ -26,13 +28,16 @@ import java.util.List;
 /**
  * ★ 底部 Session 标签栏 + 标签抽屉（PopupWindow）
  *
- * 配色约定：背景色用 ThemeManager.current().bgColor，
- *          所有前景色（文字/图标/描边）一律用 ThemeManager.foregroundTheme()，
- *          绕开壁纸模式下被强制改成白色的 textPrimary。
+ * ★ 外观口径与 DrawerPanel / SnippetManager 完全一致：只调 Theme 语义入口，
+ *   不判壁纸、不判亮度、不混色、不写死色值与圆角。
+ *     颜色 → theme().color(角色)
+ *     形状 → theme().surface() / button() / radius() / stroke() / pillButtons()
  */
 public final class SessionTabBar {
 
     private static final int DRAWER_GAP_DP = 6;
+    private static final float RADIUS_TAB_DP = 10f;
+    private static final float RADIUS_POPUP_DP = 12f;
     static final int TAG_WIDTH_PX = 288;
 
     private final TermuxActivity mActivity;
@@ -79,12 +84,12 @@ public final class SessionTabBar {
         applyVisibility(isEmpty);
         if (isEmpty) return;
 
-        mRoot.setBackgroundColor(barBg());
+        mRoot.setBackground(theme().surface(mActivity, RADIUS_TAB_DP));
         mContainer.removeAllViews();
 
         TerminalSession current = mActivity.getCurrentSession();
-        int tabW = TAG_WIDTH_PX;
-        int gap = 0;
+        int gap = 4;
+        int tabW = TAG_WIDTH_PX-gap;
 
         for (int i = 0; i < sessions.size(); i++) {
             Object obj = sessions.get(i);
@@ -162,13 +167,15 @@ public final class SessionTabBar {
         if (isActive) {
             line.setVisibility(View.VISIBLE);
             line.setBackgroundColor(accent());
-            itemRoot.setBackgroundColor(tabActive());
+            itemRoot.setBackground(theme().button(mActivity, RADIUS_TAB_DP));
+            itemRoot.setActivated(true);
             title.setTextColor(titleActive());
             icon.setColorFilter(accent());
             more.setColorFilter(accent());
         } else {
             line.setVisibility(View.GONE);
-            itemRoot.setBackgroundColor(tabNormal());
+            itemRoot.setBackground(theme().button(mActivity, RADIUS_TAB_DP));
+            itemRoot.setActivated(false);
             title.setTextColor(titleNormal());
             icon.setColorFilter(iconNormal());
             more.setColorFilter(iconNormal());
@@ -214,14 +221,7 @@ public final class SessionTabBar {
         if (anchorW <= 0) anchorW = dp(200);
 
         View content = mActivity.getLayoutInflater().inflate(R.layout.popup_tab_menu, null);
-
-        GradientDrawable pd = new GradientDrawable();
-        pd.setShape(GradientDrawable.RECTANGLE);
-        pd.setCornerRadius(dp(12));
-        pd.setColor(drawerBg());
-        pd.setStroke(dp(1), withAlpha(drawerTextSecondaryColor(), 0x30));
-        content.setBackground(pd);
-
+        content.setBackground(theme().surface(mActivity, RADIUS_POPUP_DP));
         applyDrawerTextColors(content);
 
         content.measure(
@@ -230,7 +230,7 @@ public final class SessionTabBar {
         int popupW = anchorW;
 
         mPopup = new PopupWindow(content, popupW, ViewGroup.LayoutParams.WRAP_CONTENT, true);
-        mPopup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        mPopup.setBackgroundDrawable(new ColorDrawable(android.graphics.Color.TRANSPARENT));
         mPopup.setOutsideTouchable(true);
         mPopup.setAnimationStyle(0);
         mPopup.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
@@ -288,7 +288,7 @@ public final class SessionTabBar {
 
         View divider = content.findViewById(R.id.tab_popup_divider);
         if (divider != null) {
-            divider.setBackgroundColor(withAlpha(secondary, 0x33));
+            divider.setBackgroundColor(secondary);
         }
 
         if (content instanceof ViewGroup) {
@@ -348,67 +348,27 @@ public final class SessionTabBar {
                 .show();
     }
 
-    /* ================= 调色 ================= */
+    /* ================= 调色（全部委托 Theme，零推导） ================= */
 
-    private ThemeSpec theme() { return ThemeManager.current(mActivity); }
+    private Theme theme() { return ThemeStore.get(mActivity); }
 
-    /** ★ 前景色统一走 foregroundTheme，绕开壁纸模式下的强制白字 */
-    private ThemeSpec baseTheme() { return ThemeManager.foregroundTheme(mActivity); }
-
-    private int barBg()      { return shade(theme().bgColor, -0x10); }
-    private int tabActive()  { return shade(theme().bgColor, +0x14); }
-    private int tabNormal()  { return shade(theme().bgColor, -0x22); }
-
-    private int titleActive()  { return baseTheme().textPrimary; }
-    private int titleNormal()  { return baseTheme().textSecondary; }
-    private int accent()       { return baseTheme().accent; }
-    private int iconNormal()   { return withAlpha(baseTheme().textSecondary, 0x90); }
-
-    private int drawerBg() {
-        if (ThemeManager.hasWallpaper(mActivity)) {
-            return theme().useLightTextOnWallpaper()
-                    ? blend(0xFF141414, theme().bgColor)
-                    : blend(0xFFF7F7F5, theme().bgColor);
-        }
-        return barBg();
-    }
+    private int titleActive()  { return theme().color(Theme.TEXT); }
+    private int titleNormal()  { return theme().color(Theme.TEXT_SEC); }
+    private int accent()       { return theme().color(Theme.ACCENT); }
+    private int iconNormal()   { return theme().color(Theme.TEXT_SEC); }
 
     private int drawerTextColor() {
-        if (ThemeManager.hasWallpaper(mActivity)) {
-            return theme().useLightTextOnWallpaper() ? 0xFFFFFFFF : baseTheme().textPrimary;
-        }
-        return baseTheme().textPrimary;
+        return theme().color(Theme.TEXT);
     }
 
     private int drawerTextSecondaryColor() {
-        if (ThemeManager.hasWallpaper(mActivity)) {
-            return theme().useLightTextOnWallpaper() ? 0xCCFFFFFF : baseTheme().textSecondary;
-        }
-        return baseTheme().textSecondary;
+        return theme().color(Theme.DIVIDER);
     }
 
-    private int shade(int base, int delta) {
-        int c = (base == 0) ? 0xFF141414 : base;
-        if (Color.alpha(c) != 0xFF) c = blend(0xFF141414, c);
-        return Color.argb(0xFF,
-                clamp(Color.red(c)   + delta),
-                clamp(Color.green(c) + delta),
-                clamp(Color.blue(c)  + delta));
+    /** 抽屉描边：沿用 Theme 的 OUTLINE 角色，不再自算 alpha。 */
+    private int drawerStrokeColor() {
+        return theme().color(Theme.OUTLINE);
     }
-
-    private int blend(int back, int front) {
-        float a = Color.alpha(front) / 255f;
-        return Color.argb(0xFF,
-                (int) (Color.red(back)   * (1 - a) + Color.red(front)   * a),
-                (int) (Color.green(back) * (1 - a) + Color.green(front) * a),
-                (int) (Color.blue(back)  * (1 - a) + Color.blue(front)  * a));
-    }
-
-    private int withAlpha(int c, int alpha) {
-        return Color.argb(alpha, Color.red(c), Color.green(c), Color.blue(c));
-    }
-
-    private int clamp(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 
     /* ================= 工具 ================= */
 

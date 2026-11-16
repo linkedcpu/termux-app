@@ -3,8 +3,6 @@ package com.termux.app.terminal;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.GradientDrawable;
-import android.graphics.PorterDuff;
 import android.net.Uri;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -27,6 +25,9 @@ import androidx.core.graphics.drawable.DrawableCompat;
 import com.termux.R;
 import com.termux.app.SnippetManager;
 import com.termux.app.TermuxActivity;
+import com.termux.app.terminal.theme.Theme;
+import com.termux.app.terminal.theme.ThemePreset;
+import com.termux.app.terminal.theme.ThemeStore;
 import com.termux.shared.termux.TermuxConstants;
 
 import java.io.File;
@@ -36,15 +37,13 @@ import java.io.InputStream;
 /**
  * ★ 左抽屉面板（Tab 化 + 界面主题管理器 + 收藏夹 + 更多菜单）
  *
- * 配色：背景用 ThemeManager.current()，前景用 ThemeManager.foregroundTheme()。
+ * 外观只调三类语义入口，不判壁纸、不判亮度、不写死色值/圆角/时长：
+ *   mTheme.color(角色)              —— 配色
+ *   mTheme.panel / surface / button —— 形状 + 材质 + 壁纸，全部由 Theme 决定
+ *   mTheme.radius / stroke / pillButtons / motion —— 皮肤参数
  *
- * ★ Tab 图标：TextView + compound drawable，与 SnippetManager.flatBtn/setBtnIcon
- *   同一条渲染路径（ContextCompat → DrawableCompat.wrap().mutate() → setTint
- *   → setBounds → setCompoundDrawables）。
- *
- * ★ Tab 栏自适应：条目数 ≤ MAX_FIT_TABS 时 weight 均分铺满、不滑动、不抢横向手势；
- *   超出后自动退回 wrap_content + 横向滚动，并由 selectTab 把选中项滚入视口。
- *   Tab 列表由 tabs() 数组驱动，增删 Tab 只改那一个方法。
+ * ★ Tab 图标：TextView + compound drawable，与 SnippetManager.setBtnIcon 同一路径。
+ * ★ Tab 栏自适应：≤ MAX_FIT_TABS 时 weight 均分铺满；超出自动横滑。
  */
 public final class DrawerPanel {
 
@@ -55,6 +54,11 @@ public final class DrawerPanel {
 
     /** ★ 不超过这个数量就均分铺满、不启用横滑 */
     private static final int MAX_FIT_TABS     = 5;
+
+    /** 层级基准：控件只说「我是哪一层」，圆润倍率由皮肤决定 */
+    private static final float RADIUS_PAGE_DP = 14f;
+    private static final float RADIUS_TAB_DP  = 10f;
+    private static final float RADIUS_BTN_DP  = 8f;
 
     private static final int ICON_THEME   = R.drawable.ic_drawer_theme;
     private static final int ICON_MORE    = R.drawable.ic_drawer_more;
@@ -68,8 +72,12 @@ public final class DrawerPanel {
         final String key;
         final int icon;
         final Runnable builder;
+
         TabDef(String title, String key, int icon, Runnable builder) {
-            this.title = title; this.key = key; this.icon = icon; this.builder = builder;
+            this.title = title;
+            this.key = key;
+            this.icon = icon;
+            this.builder = builder;
         }
     }
 
@@ -90,10 +98,15 @@ public final class DrawerPanel {
     private final LinearLayout mTabContainer;
     private final FrameLayout mContent;
 
+    private Theme mTheme;
     private int mColorBg;
-    private int mColorTextPrimary;
-    private int mColorTextSecondary;
+    private int mColorSurface;
+    private int mColorText;
+    private int mColorTextSec;
+    private int mColorIcon;
     private int mColorAccent;
+    private int mColorOutline;
+    private int mPressDuration;
 
     private View mSelectedTab;
     private ActivityResultLauncher<String> mPickImage;
@@ -113,8 +126,11 @@ public final class DrawerPanel {
         mTabContainer = mRoot.findViewById(R.id.drawer_tab_container);
         mContent = mRoot.findViewById(R.id.drawer_content);
 
+        // ★ 去掉系统阴影，避免圆角外四角露出 scrim
+        mRoot.setElevation(0f);
+
         registerPickImage();
-        applyWallpaper();
+        applyPanel();
 
         buildTabs();
         setupVersion();
@@ -150,49 +166,31 @@ public final class DrawerPanel {
         }
     }
 
-    /* ================= 配色 / 壁纸 ================= */
+    /* ================= 配色 / 外观 ================= */
 
     private void applyColors() {
-        ThemeSpec t = ThemeManager.current(mActivity);
-        ThemeSpec base = ThemeManager.foregroundTheme(mActivity);
-        mColorBg = t.bgColor;
-        mColorTextPrimary = base.textPrimary;
-        mColorTextSecondary = base.textSecondary;
-        mColorAccent = base.accent;
-
-        // ★ 兜底：主题取到 0（透明）时图标会“隐形”
-        if (mColorTextPrimary == 0)   mColorTextPrimary = 0xFFECECEC;
-        if (mColorTextSecondary == 0) mColorTextSecondary = 0xCCFFFFFF;
-        if (mColorAccent == 0)        mColorAccent = 0xFF4CAF50;
+        mTheme = ThemeStore.get(mActivity);
+        mColorBg         = mTheme.color(Theme.BG);
+        mColorSurface    = mTheme.color(Theme.SURFACE);
+        mColorText       = mTheme.color(Theme.TEXT);
+        mColorTextSec    = mTheme.color(Theme.TEXT_SEC);
+        mColorIcon       = mTheme.color(Theme.ICON);
+        mColorAccent     = mTheme.color(Theme.ACCENT);
+        mColorOutline    = mTheme.color(Theme.OUTLINE);
+        mPressDuration   = mTheme.motion().pressDurationMs;
     }
 
-    private void applyWallpaper() {
-        ThemeSpec t = ThemeManager.current(mActivity);
-        if (t.wallpaperPath != null) {
-            try {
-                Drawable d = Drawable.createFromPath(t.wallpaperPath);
-                if (d != null) {
-                    mRoot.setBackground(d);
-                    if (!t.useLightTextOnWallpaper()) {
-                        mRoot.getBackground().setColorFilter(0x73FFFFFF, PorterDuff.Mode.MULTIPLY);
-                    } else {
-                        mRoot.getBackground().clearColorFilter();
-                    }
-                    return;
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        mRoot.setBackgroundColor(t.bgColor);
+    /** ★ 一行拿到抽屉根背景：壁纸/材质/蒙层/圆角/描边全在 Theme 里决定 */
+    private void applyPanel() {
+        mRoot.setBackground(mTheme.panel(mActivity, RADIUS_PAGE_DP));
     }
 
     /** ★ 供 TermuxActivity 切主题后调用：重新取色并重绘整个抽屉 */
     public void reloadTheme() {
         applyColors();
-        applyWallpaper();
+        applyPanel();
         setupVersion();
         buildTabs();
-        // ★ 恢复到最后选中的 Tab，而不是永远回到第一个
         if (mCurrentTabKey != null) {
             openTab(mCurrentTabKey);
         } else if (mTabContainer.getChildCount() > 0) {
@@ -207,7 +205,7 @@ public final class DrawerPanel {
                         if (uri != null) {
                             String path = copyImageToPrivate(uri);
                             if (path != null) {
-                                ThemeManager.setWallpaper(mActivity, path);
+                                ThemeStore.setWallpaper(mActivity, path);
                                 reloadTheme();
                             }
                         }
@@ -233,7 +231,7 @@ public final class DrawerPanel {
             if (in == null) return null;
             File dir = new File(mActivity.getFilesDir(), "theme");
             if (!dir.exists() && !dir.mkdirs()) return null;
-            File dst = new File(dir, "wallpaper.img");
+            File dst = new File(dir, "theme_wallpaper.img");
             out = new FileOutputStream(dst);
             byte[] buf = new byte[8192];
             int n;
@@ -260,12 +258,12 @@ public final class DrawerPanel {
         } catch (Exception ignored) {
         }
         version.setText(text);
-        version.setTextColor(mColorTextSecondary);
+        version.setTextColor(mColorTextSec);
     }
 
     /**
      * ★ 构建 Tab 栏：
-     *   条目 ≤ MAX_FIT_TABS → weight 均分铺满、容器 MATCH_PARENT，不产生横向滚动；
+     *   条目 ≤ MAX_FIT_TABS → weight 均分铺满、容器 MATCH_PARENT；
      *   条目 > MAX_FIT_TABS → 容器回退 wrap_content，由外层 HSV 提供横滑。
      */
     private void buildTabs() {
@@ -295,7 +293,6 @@ public final class DrawerPanel {
             tab.setFocusable(true);
             tab.setIncludeFontPadding(false);
             tab.setMinWidth(dp(TAB_MIN_W_DP));
-            tab.setBackgroundResource(getSelectableItemBackground());
             tab.setPadding(dp(TAB_PAD_H_DP), dp(TAB_PAD_V_DP), dp(TAB_PAD_H_DP), dp(TAB_PAD_V_DP));
             tab.setTag(def.key);
             tab.setContentDescription(def.title);
@@ -309,6 +306,7 @@ public final class DrawerPanel {
 
             final String tabKey = def.key;
             final Runnable pageBuilder = def.builder;
+            final int pressMs = mPressDuration;
             tab.setOnClickListener(v -> {
                 mSnippetTabActive = "snippet".equals(tabKey);
                 selectTab(tab);
@@ -316,15 +314,26 @@ public final class DrawerPanel {
                 notifyTabChanged(tabKey);
             });
             tab.setOnTouchListener((v, e) -> {
-                if (e.getAction() == MotionEvent.ACTION_DOWN) v.setAlpha(0.5f);
-                else if (e.getAction() == MotionEvent.ACTION_UP
-                        || e.getAction() == MotionEvent.ACTION_CANCEL) v.setAlpha(1f);
+                if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                    v.animate().cancel();
+                    v.animate().setDuration(pressMs).alpha(0.5f).start();
+                } else if (e.getAction() == MotionEvent.ACTION_UP
+                        || e.getAction() == MotionEvent.ACTION_CANCEL) {
+                    v.animate().cancel();
+                    v.animate().setDuration(pressMs).alpha(1f).start();
+                }
                 return false;
             });
 
-            setTabIcon(tab, def.icon, mColorTextSecondary);
+            setTabIcon(tab, def.icon, mColorIcon);
+            tab.setBackground(tabBackground(false));
             mTabContainer.addView(tab, lp);
         }
+    }
+
+    /** ★ Tab 背景：选中态走 STATE_SELECTED，形状与壁纸适配都在 Theme 内 */
+    private Drawable tabBackground(boolean selected) {
+        return mTheme.surface(mActivity, RADIUS_TAB_DP);
     }
 
     /** ★ 与 SnippetManager.setBtnIcon 同一写法 */
@@ -355,23 +364,24 @@ public final class DrawerPanel {
     private void selectTab(@NonNull View tab) {
         if (mSelectedTab != null) {
             mSelectedTab.setSelected(false);
+            mSelectedTab.setBackground(tabBackground(false));
             if (mSelectedTab instanceof TextView) {
-                setTabIcon((TextView) mSelectedTab, iconForTag(mSelectedTab), mColorTextSecondary);
+                setTabIcon((TextView) mSelectedTab, iconForTag(mSelectedTab), mColorIcon);
             }
         }
         mSelectedTab = tab;
         tab.setSelected(true);
+        tab.setBackground(tabBackground(true));
         if (tab instanceof TextView) {
             setTabIcon((TextView) tab, iconForTag(tab), mColorAccent);
         }
 
-        // ★ 只在确实溢出时才滚动，均分铺满形态下完全不碰滚动容器
         tab.post(() -> {
             View parent = tab.getParent() instanceof View ? (View) tab.getParent() : null;
             View scroller = parent != null && parent.getParent() instanceof View
                     ? (View) parent.getParent() : null;
             if (!(scroller instanceof InterceptHorizontalScrollView)) return;
-            if (tab.getRight() <= scroller.getWidth()) return;   // 装得下，不滚
+            if (tab.getRight() <= scroller.getWidth()) return;
             int target = Math.max(tab.getLeft() - dp(16), 0);
             ((InterceptHorizontalScrollView) scroller).smoothScrollTo(target, 0);
         });
@@ -425,15 +435,15 @@ public final class DrawerPanel {
 
         LinearLayout options = new LinearLayout(mActivity);
         options.setOrientation(LinearLayout.VERTICAL);
-        for (int i = 0; i < ThemeSpec.presetCount(); i++) {
-            options.addView(makeThemeOption(i, ThemeSpec.presetName(i)));
+        for (int i = 0; i < ThemePreset.count(); i++) {
+            options.addView(makeThemeOption(i, ThemePreset.get(i).name));
         }
         page.addView(options);
 
         page.addView(makeButton("从相册选择背景图", v -> pickWallpaper()));
-        if (ThemeManager.hasWallpaper(mActivity)) {
+        if (ThemeStore.hasWallpaper(mActivity)) {
             page.addView(makeButton("清除背景图", v -> {
-                ThemeManager.clearWallpaper(mActivity);
+                ThemeStore.clearWallpaper(mActivity);
                 reloadTheme();
             }));
         }
@@ -449,23 +459,25 @@ public final class DrawerPanel {
         TextView tv = new TextView(mActivity);
         tv.setText(label);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        tv.setTextColor(mColorTextPrimary);
-        tv.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        tv.setTextColor(mColorText);
+        tv.setLayoutParams(new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         option.addView(tv);
 
         View indicator = new View(mActivity);
         int size = dp(18);
         indicator.setLayoutParams(new LinearLayout.LayoutParams(size, size));
-        GradientDrawable g = new GradientDrawable();
-        g.setShape(GradientDrawable.OVAL);
+        android.graphics.drawable.GradientDrawable g =
+                new android.graphics.drawable.GradientDrawable();
+        g.setShape(android.graphics.drawable.GradientDrawable.OVAL);
         g.setStroke(dp(2), mColorAccent);
-        g.setColor(ThemeManager.isPresetSelected(mActivity, index) ? mColorAccent : 0);
+        g.setColor(ThemeStore.isSelected(mActivity, index) ? mColorAccent : 0);
         indicator.setBackground(g);
         option.addView(indicator);
 
         option.setOnClickListener(v -> {
-            if (ThemeManager.isPresetSelected(mActivity, index)) return;
-            ThemeManager.selectPreset(mActivity, index);
+            if (ThemeStore.isSelected(mActivity, index)) return;
+            ThemeStore.select(mActivity, index);
             mActivity.applyThemeToUiFromDrawer();
         });
         return option;
@@ -482,11 +494,8 @@ public final class DrawerPanel {
                 ((ViewGroup) panel.getParent()).removeView(panel);
             }
             panel.setVisibility(View.VISIBLE);
-            mSnippet.expand();
             mSnippetTabActive = true;
 
-            // ★ 外壳必须是 LinearLayout，否则 panel 内部的 layout_weight 失效，
-            //   会导致卡片列表压住底部搜索栏
             LinearLayout host = new LinearLayout(mActivity);
             host.setOrientation(LinearLayout.VERTICAL);
             host.setLayoutParams(new FrameLayout.LayoutParams(
@@ -540,6 +549,7 @@ public final class DrawerPanel {
         LinearLayout page = new LinearLayout(mActivity);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(dp(4), dp(4), dp(4), dp(4));
+        page.setBackground(mTheme.surface(mActivity, RADIUS_PAGE_DP));   // ★ 一行，无 if
         return page;
     }
 
@@ -558,7 +568,7 @@ public final class DrawerPanel {
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp);
         view.setLineSpacing(dp(2), 1f);
         view.setTypeface(null, bold ? Typeface.BOLD : Typeface.NORMAL);
-        view.setTextColor(mColorTextPrimary);
+        view.setTextColor(mColorText);
         view.setPadding(0, dp(6), 0, dp(6));
         return view;
     }
@@ -570,8 +580,20 @@ public final class DrawerPanel {
         view.setGravity(Gravity.CENTER);
         view.setPadding(dp(12), dp(10), dp(12), dp(10));
         view.setTextColor(mColorAccent);
-        view.setBackgroundResource(getSelectableItemBackground());
+        view.setBackground(mTheme.button(mActivity, RADIUS_BTN_DP));    // ★ 一行，无 if
         view.setOnClickListener(listener);
+        final int pressMs = mPressDuration;
+        view.setOnTouchListener((v, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                v.animate().cancel();
+                v.animate().setDuration(pressMs).alpha(0.6f).start();
+            } else if (e.getAction() == MotionEvent.ACTION_UP
+                    || e.getAction() == MotionEvent.ACTION_CANCEL) {
+                v.animate().cancel();
+                v.animate().setDuration(pressMs).alpha(1f).start();
+            }
+            return false;
+        });
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.setMargins(0, dp(8), 0, 0);

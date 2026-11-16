@@ -9,7 +9,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -24,7 +23,7 @@ import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 import android.widget.Toast;
-
+import android.graphics.Color;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -43,6 +42,8 @@ import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.TermuxTerminalViewClient;
 import com.termux.app.terminal.io.TerminalToolbarViewPager;
 import com.termux.app.terminal.io.TermuxTerminalExtraKeys;
+import com.termux.app.terminal.theme.Theme;
+import com.termux.app.terminal.theme.ThemeStore;
 import com.termux.shared.activities.ReportActivity;
 import com.termux.shared.activity.ActivityUtils;
 import com.termux.shared.activity.media.AppCompatActivityUtils;
@@ -311,7 +312,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.onStop();
         removeTermuxActivityRootViewGlobalLayoutListener();
         unregisterTermuxActivityBroadcastReceiver();
-        getDrawer().closeDrawers();   // 关闭不碰高亮，onDrawerClosed 统一处理
+        getDrawer().closeDrawers();
         if (mSnippetMgr != null) mSnippetMgr.save();
     }
 
@@ -332,8 +333,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         mDrawerPanel = null;
         try {
             unbindService(this);
-        } catch (Exception e) {
-            // ignore
+        } catch (Exception ignored) {
         }
     }
 
@@ -369,8 +369,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                                                                         .EXTRA_FAILSAFE_SESSION,
                                                                 false);
                                 mTermuxTerminalSessionActivityClient.addNewSession(fs, null);
-                            } catch (WindowManager.BadTokenException e) {
-                                // ignore
+                            } catch (WindowManager.BadTokenException ignored) {
                             }
                         });
             } else finishActivityIfNotFinishing();
@@ -435,12 +434,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         });
     }
 
-    /** ★ 主题联动：抽屉 / 收藏夹 / 标签栏 / ☆ ≡ 一起刷新 */
+    /** ★ 主题联动：抽屉 / 收藏夹 / 标签栏 / ☆ ≡ / 扩展键栏 一起刷新 */
     private void applyThemeToUi() {
         cacheDrawerButtonColors();
         if (mDrawerPanel != null) mDrawerPanel.reloadTheme();
         if (mSnippetMgr != null && mSnippetMgr.isExpanded()) mSnippetMgr.reloadTheme();
         if (mSessionTabBar != null) mSessionTabBar.render();
+        applyThemeToExtraKeys();
         syncDrawerButtonHighlights();
     }
 
@@ -506,12 +506,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         btn.invalidate();
     }
 
+    /** ★ 修复：不再使用已删除的 ThemeManager / ThemeSpec，统一从 Theme 获取颜色。 */
     private void cacheDrawerButtonColors() {
         try {
-            com.termux.app.terminal.ThemeSpec t =
-                    com.termux.app.terminal.ThemeManager.current(this);
-            mAccentColor = t.accent;
-            mNormalColor = t.textSecondary;
+            Theme theme = ThemeStore.get(this);
+            mAccentColor = theme.color(Theme.ACCENT);
+            mNormalColor = theme.color(Theme.ICON);
         } catch (Throwable ignored) {
             mAccentColor = Color.parseColor("#FF9800");
             mNormalColor = Color.parseColor("#8A8A8A");
@@ -628,6 +628,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                         : savedInstanceState.getString(ARG_TERMINAL_TOOLBAR_TEXT_INPUT);
         vp.setAdapter(new TerminalToolbarViewPager.PageAdapter(this, saved));
         vp.addOnPageChangeListener(new TerminalToolbarViewPager.OnPageChangeListener(this, vp));
+        applyThemeToExtraKeys();
     }
 
     private void setTerminalToolbarHeight() {
@@ -658,8 +659,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                                 : R.string.msg_disabling_terminal_toolbar),
                 true);
         vp.setVisibility(show ? View.VISIBLE : View.GONE);
-        if (show && isTerminalToolbarTextInputViewSelected())
-            findViewById(R.id.terminal_toolbar_text_input).requestFocus();
+        if (show) {
+            applyThemeToExtraKeys();
+            if (isTerminalToolbarTextInputViewSelected())
+                findViewById(R.id.terminal_toolbar_text_input).requestFocus();
+        }
         return show;
     }
 
@@ -673,6 +677,43 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         android.widget.EditText et = findViewById(R.id.terminal_toolbar_text_input);
         if (et != null && !et.getText().toString().isEmpty())
             out.putString(ARG_TERMINAL_TOOLBAR_TEXT_INPUT, et.getText().toString());
+    }
+
+    /* ========================================================= */
+    /* ★ 扩展键栏主题联动：圆角 / 胶囊 / 描边全由 Theme 决定       */
+    /* ========================================================= */
+
+    /**
+     * 键栏容器背景与键面造型都只从 {@link Theme} 取值，控件侧不做任何「该不该圆」的判断。
+     * 内部已含 {@link ExtraKeysView#reload}，调用方无需再单独 reload。
+     */
+    private void applyThemeToExtraKeys() {
+        if (mExtraKeysView == null || mTermuxTerminalExtraKeys == null) return;
+        Theme theme;
+        try {
+            theme = ThemeStore.get(this);
+        } catch (Throwable t) {
+            return;
+        }
+
+        mExtraKeysView.setButtonTextAllCaps(mProperties.shouldExtraKeysTextBeAllCaps());
+        mExtraKeysView.reload(
+                mTermuxTerminalExtraKeys.getExtraKeysInfo(), mTerminalToolbarDefaultHeight);
+
+        // 容器背景：圆角基准同样由皮肤决定（胶囊皮肤给大圆角，直角皮肤给 0）
+        mExtraKeysView.setBackground(
+                theme.surface(this, theme.pillButtons() ? Theme.RADIUS_LARGE : Theme.RADIUS_SMALL));
+
+        // reload 会 removeAllViews() 重建按钮，造型必须在其之后再套
+        mExtraKeysView.applyTheme(
+                theme.color(Theme.TEXT),
+                theme.color(Theme.ON_ACCENT),
+                theme.color(Theme.RAISED),
+                theme.color(Theme.ACCENT),
+                theme.radius(this, Theme.RADIUS_SMALL),
+                theme.pillButtons(),
+                theme.stroke(this),
+                theme.color(Theme.OUTLINE));
     }
 
     /* ========================================================= */
@@ -1031,11 +1072,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private void reloadActivityStyling(boolean recreate) {
         if (mProperties != null) {
             reloadProperties();
-            if (mExtraKeysView != null) {
-                mExtraKeysView.setButtonTextAllCaps(mProperties.shouldExtraKeysTextBeAllCaps());
-                mExtraKeysView.reload(
-                        mTermuxTerminalExtraKeys.getExtraKeysInfo(), mTerminalToolbarDefaultHeight);
-            }
             TermuxThemeUtils.setAppNightMode(mProperties.getNightMode());
         }
         setMargins();
@@ -1045,6 +1081,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             mTermuxTerminalSessionActivityClient.onReloadActivityStyling();
         if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.onReloadActivityStyling();
 
+        // ★ 键栏造型/配色随主题刷新（内部已含 reload，取代原手写 reload）
+        applyThemeToExtraKeys();
         applyThemeToUi();
         if (mSessionTabBar != null) mSessionTabBar.render();
 
@@ -1069,7 +1107,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public void onBackPressed() {
         if (mSessionTabBar != null && mSessionTabBar.onBackPressed()) return;
         if (getDrawer().isDrawerOpen(Gravity.LEFT)) {
-            getDrawer().closeDrawers();   // 关闭不碰高亮，onDrawerClosed 统一处理
+            getDrawer().closeDrawers();
             return;
         }
         if (mSnippetMgr != null && mSnippetMgr.isExpanded()) {

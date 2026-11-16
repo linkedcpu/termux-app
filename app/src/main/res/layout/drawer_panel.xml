@@ -8,11 +8,6 @@
     android:background="@null"
     tools:ignore="UnusedAttribute">
 
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/drawer_text_secondary"
-        android:alpha="0.25" />
 
     <com.termux.app.terminal.InterceptHorizontalScrollView
         android:id="@+id/drawer_tab_scroll"

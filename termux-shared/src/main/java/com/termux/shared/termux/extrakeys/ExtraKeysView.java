@@ -2,23 +2,14 @@ package com.termux.shared.termux.extrakeys;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.util.AttributeSet;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.ScheduledExecutorService;
-
-import java.util.Map;
-import java.util.HashMap;
-import java.util.stream.Collectors;
-
 import android.view.HapticFeedbackConstants;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -36,9 +27,27 @@ import com.termux.shared.R;
 import com.termux.shared.termux.terminal.io.TerminalExtraKeys;
 import com.termux.shared.theme.ThemeUtils;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
 /**
  * A {@link View} showing extra keys (such as Escape, Ctrl, Alt) not normally available on an Android soft
  * keyboards.
+ *
+ * <p>★ 主题联动约定：控件<b>不判断</b>该不该圆角，只执行 {@link #applyTheme} 传入的
+ * radiusPx / pill / strokePx。圆角、胶囊、描边的决策权完全属于 {@code Theme} / {@code ThemeShape}。
+ *
+ * <p>★ 造型必须通过 {@link MaterialButton#setCornerRadius(float)} /
+ * {@link MaterialButton#setStrokeWidth(int)} 作用在 MaterialButton 自带的 MaterialShapeDrawable 上。
+ * <b>禁止</b>调用 {@code setBackground(Drawable)}：Material 1.2.0 起会整体替换掉 MaterialShapeDrawable，
+ * 导致圆角 / 描边 / 水波纹全部静默失效。
  *
  * To use it, add following to a layout file and import it in your activity layout file or inflate
  * it with a {@link androidx.viewpager.widget.ViewPager}.:
@@ -60,18 +69,9 @@ import com.termux.shared.theme.ThemeUtils;
  * in {@link ExtraKeysView#ExtraKeysView(Context, AttributeSet)} by calling the respective functions.
  * If you extend {@link ExtraKeysView}, you can also set them in the constructor, but do call super().
  *
- * After this you will have to make a call to {@link ExtraKeysView#reload(ExtraKeysInfo, float) and pass
+ * After this you will have to make a call to {@link ExtraKeysView#reload(ExtraKeysInfo, float)} and pass
  * it the {@link ExtraKeysInfo} to load and display the extra keys. Read its class javadocs for more
  * info on how to create it.
- *
- * Termux app defines the view in res/layout/view_terminal_toolbar_extra_keys and
- * inflates it in TerminalToolbarViewPager.instantiateItem() and sets the {@link ExtraKeysView} client
- * and calls {@link ExtraKeysView#reload(ExtraKeysInfo).
- * The {@link ExtraKeysInfo} is created by TermuxAppSharedProperties.setExtraKeys().
- * Then its got and the view height is adjusted in TermuxActivity.setTerminalToolbarHeight().
- * The client used is TermuxTerminalExtraKeys, which extends
- * {@link TerminalExtraKeys } to handle Termux app specific logic and
- * leave the rest to the super class.
  */
 public final class ExtraKeysView extends GridLayout {
 
@@ -105,7 +105,6 @@ public final class ExtraKeysView extends GridLayout {
          * can handle it depending on system settings.
          */
         boolean performExtraKeyButtonHapticFeedback(View view, ExtraKeyButton buttonInfo, MaterialButton button);
-
     }
 
 
@@ -128,7 +127,6 @@ public final class ExtraKeysView extends GridLayout {
     public static final int DEFAULT_BUTTON_ACTIVE_BACKGROUND_COLOR = 0xFF7F7F7F;
 
 
-
     /** Defines the minimum allowed duration in milliseconds for {@link #mLongPressTimeout}. */
     public static final int MIN_LONG_PRESS_DURATION = 200;
     /** Defines the maximum allowed duration in milliseconds for {@link #mLongPressTimeout}. */
@@ -138,11 +136,13 @@ public final class ExtraKeysView extends GridLayout {
 
     /** Defines the minimum allowed duration in milliseconds for {@link #mLongPressRepeatDelay}. */
     public static final int MIN_LONG_PRESS__REPEAT_DELAY = 5;
-    /** Defines the maximum allowed duration in milliseconds for {@link #mLongPressRepeatDelay}. */
+    /** Defines the maximum allowed duration in milliseconds for {@link #MAX_LONG_PRESS__REPEAT_DELAY}. */
     public static final int MAX_LONG_PRESS__REPEAT_DELAY = 2000;
     /** Defines the default duration in milliseconds for {@link #mLongPressRepeatDelay}. */
     public static final int DEFAULT_LONG_PRESS_REPEAT_DELAY = 80;
 
+    /** ★ 胶囊形态用的半径上限，MaterialButton 会自行收敛为半圆 */
+    private static final float PILL_RADIUS_PX = 1000f;
 
 
     /** The implementation of the {@link IExtraKeysView} that acts as a client for the {@link ExtraKeysView}. */
@@ -156,15 +156,12 @@ public final class ExtraKeysView extends GridLayout {
      * set when the call to {@link #setSpecialButtons(Map)} is made. */
     protected Set<String> mSpecialButtonsKeys;
 
-
     /**
      * The list of keys for which auto repeat of key should be triggered if its extra keys button
      * is long pressed. This is done by calling {@link IExtraKeysView#onExtraKeyButtonClick(View, ExtraKeyButton, MaterialButton)}
      * every {@link #mLongPressRepeatDelay} seconds after {@link #mLongPressTimeout} has passed.
-     * The default keys are defined by {@link ExtraKeysConstants#PRIMARY_REPETITIVE_KEYS}.
      */
     protected List<String> mRepetitiveKeys;
-
 
     /** The text color for the extra keys button. Defaults to {@link #DEFAULT_BUTTON_TEXT_COLOR}. */
     protected int mButtonTextColor;
@@ -180,24 +177,23 @@ public final class ExtraKeysView extends GridLayout {
     /** Defines whether text for the extra keys button should be all capitalized automatically. */
     protected boolean mButtonTextAllCaps = true;
 
+    /* ★ 造型状态：全部来自 Theme，控件自身不做任何判断 */
+    private float mRadiusPx = 0f;
+    private boolean mPill = false;
+    private int mStrokePx = 0;
+    private int mOutlineColor = 0x00000000;
+
 
     /**
-     * Defines the duration in milliseconds before a press turns into a long press. The default
-     * duration used is the one returned by a call to {@link ViewConfiguration#getLongPressTimeout()}
-     * which will return the system defined duration which can be changed in accessibility settings.
-     * The duration must be in between {@link #MIN_LONG_PRESS_DURATION} and {@link #MAX_LONG_PRESS_DURATION},
-     * otherwise {@link #FALLBACK_LONG_PRESS_DURATION} is used.
+     * Defines the duration in milliseconds before a press turns into a long press.
      */
     protected int mLongPressTimeout;
 
     /**
      * Defines the duration in milliseconds for the delay between trigger of each repeat of
-     * {@link #mRepetitiveKeys}. The default value is defined by {@link #DEFAULT_LONG_PRESS_REPEAT_DELAY}.
-     * The duration must be in between {@link #MIN_LONG_PRESS__REPEAT_DELAY} and
-     * {@link #MAX_LONG_PRESS__REPEAT_DELAY}, otherwise {@link #DEFAULT_LONG_PRESS_REPEAT_DELAY} is used.
+     * {@link #mRepetitiveKeys}.
      */
     protected int mLongPressRepeatDelay;
-
 
     /** The popup window shown if {@link ExtraKeyButton#getPopup()} returns a {@code non-null} value
      * and a swipe up action is done on an extra key. */
@@ -223,6 +219,9 @@ public final class ExtraKeysView extends GridLayout {
 
         setLongPressTimeout(ViewConfiguration.getLongPressTimeout());
         setLongPressRepeatDelay(DEFAULT_LONG_PRESS_REPEAT_DELAY);
+
+        // ★ 不裁剪，避免圆角被 GridLayout 边缘截断
+        setClipToPadding(false);
     }
 
 
@@ -270,13 +269,9 @@ public final class ExtraKeysView extends GridLayout {
 
     /**
      * Set the {@link ExtraKeysView} button colors.
-     *
-     * @param buttonTextColor The value for {@link #mButtonTextColor}.
-     * @param buttonActiveTextColor The value for {@link #mButtonActiveTextColor}.
-     * @param buttonBackgroundColor The value for {@link #mButtonBackgroundColor}.
-     * @param buttonActiveBackgroundColor The value for {@link #mButtonActiveBackgroundColor}.
      */
-    public void setButtonColors(int buttonTextColor, int buttonActiveTextColor, int buttonBackgroundColor, int buttonActiveBackgroundColor) {
+    public void setButtonColors(int buttonTextColor, int buttonActiveTextColor,
+                                int buttonBackgroundColor, int buttonActiveBackgroundColor) {
         mButtonTextColor = buttonTextColor;
         mButtonActiveTextColor = buttonActiveTextColor;
         mButtonBackgroundColor = buttonBackgroundColor;
@@ -284,48 +279,17 @@ public final class ExtraKeysView extends GridLayout {
     }
 
 
-    /** Get {@link #mButtonTextColor}. */
-    public int getButtonTextColor() {
-        return mButtonTextColor;
-    }
+    public int getButtonTextColor() { return mButtonTextColor; }
+    public void setButtonTextColor(int buttonTextColor) { mButtonTextColor = buttonTextColor; }
 
-    /** Set {@link #mButtonTextColor}. */
-    public void setButtonTextColor(int buttonTextColor) {
-        mButtonTextColor = buttonTextColor;
-    }
+    public int getButtonActiveTextColor() { return mButtonActiveTextColor; }
+    public void setButtonActiveTextColor(int buttonActiveTextColor) { mButtonActiveTextColor = buttonActiveTextColor; }
 
+    public int getButtonBackgroundColor() { return mButtonBackgroundColor; }
+    public void setButtonBackgroundColor(int buttonBackgroundColor) { mButtonBackgroundColor = buttonBackgroundColor; }
 
-    /** Get {@link #mButtonActiveTextColor}. */
-    public int getButtonActiveTextColor() {
-        return mButtonActiveTextColor;
-    }
-
-    /** Set {@link #mButtonActiveTextColor}. */
-    public void setButtonActiveTextColor(int buttonActiveTextColor) {
-        mButtonActiveTextColor = buttonActiveTextColor;
-    }
-
-
-    /** Get {@link #mButtonBackgroundColor}. */
-    public int getButtonBackgroundColor() {
-        return mButtonBackgroundColor;
-    }
-
-    /** Set {@link #mButtonBackgroundColor}. */
-    public void setButtonBackgroundColor(int buttonBackgroundColor) {
-        mButtonBackgroundColor = buttonBackgroundColor;
-    }
-
-
-    /** Get {@link #mButtonActiveBackgroundColor}. */
-    public int getButtonActiveBackgroundColor() {
-        return mButtonActiveBackgroundColor;
-    }
-
-    /** Set {@link #mButtonActiveBackgroundColor}. */
-    public void setButtonActiveBackgroundColor(int buttonActiveBackgroundColor) {
-        mButtonActiveBackgroundColor = buttonActiveBackgroundColor;
-    }
+    public int getButtonActiveBackgroundColor() { return mButtonActiveBackgroundColor; }
+    public void setButtonActiveBackgroundColor(int buttonActiveBackgroundColor) { mButtonActiveBackgroundColor = buttonActiveBackgroundColor; }
 
     /** Set {@link #mButtonTextAllCaps}. */
     public void setButtonTextAllCaps(boolean buttonTextAllCaps) {
@@ -374,13 +338,82 @@ public final class ExtraKeysView extends GridLayout {
     }
 
 
+    /* ========================================================= */
+    /* ★ 主题联动入口：圆角 / 胶囊 / 描边决策权全在 Theme          */
+    /* ========================================================= */
+
+    /**
+     * 用当前皮肤给扩展键栏上色与造型。必须在 {@link #reload(ExtraKeysInfo, float)} <b>之后</b>调用，
+     * 因为 reload 会 removeAllViews() 重建按钮，先套色会被冲掉。
+     *
+     * @param textColor        普通键文字色        {@code Theme.color(Theme.TEXT)}
+     * @param activeTextColor  激活 special 键文字色 {@code Theme.color(Theme.ON_ACCENT)}
+     * @param bgColor          普通键底色          {@code Theme.color(Theme.RAISED)}
+     * @param activeBgColor    激活键底色          {@code Theme.color(Theme.ACCENT)}
+     * @param radiusPx         键面圆角半径(px)     {@code Theme.radius(ctx, RADIUS_SMALL)}，{@code <=0} 即直角
+     * @param pill             是否胶囊形态         {@code Theme.pillButtons()}
+     * @param strokePx         描边宽度(px)         {@code Theme.stroke(ctx)}，{@code <=0} 即无描边
+     * @param outlineColor     描边颜色            {@code Theme.color(Theme.OUTLINE)}
+     */
+    public void applyTheme(int textColor, int activeTextColor,
+                           int bgColor, int activeBgColor,
+                           float radiusPx, boolean pill,
+                           int strokePx, int outlineColor) {
+        setButtonColors(textColor, activeTextColor, bgColor, activeBgColor);
+        mRadiusPx = Math.max(0f, radiusPx);
+        mPill = pill;
+        mStrokePx = Math.max(0, strokePx);
+        mOutlineColor = outlineColor;
+        refreshButtonColors();
+    }
+
+    /** 按当前四色 + 造型参数重刷已挂载的所有按钮（reload 之后调） */
+    public void refreshButtonColors() {
+        for (int i = 0; i < getChildCount(); i++) {
+            View v = getChildAt(i);
+            if (!(v instanceof MaterialButton)) continue;
+            MaterialButton b = (MaterialButton) v;
+            b.setTextColor(mButtonTextColor);
+            styleKey(b, mButtonBackgroundColor, false);
+        }
+        if (mSpecialButtons != null) {
+            for (SpecialButtonState st : mSpecialButtons.values()) {
+                if (st == null || st.buttons == null) continue;
+                boolean on = st.isActive;
+                int color = on ? mButtonActiveTextColor : mButtonTextColor;
+                int bg = on ? mButtonActiveBackgroundColor : mButtonBackgroundColor;
+                for (MaterialButton b : st.buttons) {
+                    if (b == null) continue;
+                    b.setTextColor(color);
+                    styleKey(b, bg, on);
+                }
+            }
+        }
+    }
+
+    /**
+     * ★ 造型落点：只动 MaterialButton 自带的 MaterialShapeDrawable。
+     * 绝不调用 setBackground(Drawable)——那会整体替换掉 ShapeDrawable，导致圆角/描边/水波纹失效。
+     */
+    private void styleKey(@Nullable MaterialButton b, int bgColor, boolean active) {
+        if (b == null) return;
+        b.setCornerRadius((int) (mPill ? PILL_RADIUS_PX : mRadiusPx));
+        b.setStrokeWidth(mStrokePx);
+        if (mStrokePx > 0) {
+            b.setStrokeColor(ColorStateList.valueOf(active ? mButtonActiveTextColor : mOutlineColor));
+        }
+        if (bgColor != 0) {
+            b.setBackgroundTintList(ColorStateList.valueOf(bgColor));
+        }
+        b.invalidate();
+    }
+
 
     /**
      * Reload this instance of {@link ExtraKeysView} with the info passed in {@code extraKeysInfo}.
      *
      * @param extraKeysInfo The {@link ExtraKeysInfo} that defines the necessary info for the extra keys.
-     * @param heightPx The height in pixels of the parent surrounding the {@link ExtraKeysView}. It must
-     *                 be a single child.
+     * @param heightPx The height in pixels of the parent surrounding the {@link ExtraKeysView}.
      */
     @SuppressLint("ClickableViewAccessibility")
     public void reload(ExtraKeysInfo extraKeysInfo, float heightPx) {
@@ -401,10 +434,10 @@ public final class ExtraKeysView extends GridLayout {
             for (int col = 0; col < buttons[row].length; col++) {
                 final ExtraKeyButton buttonInfo = buttons[row][col];
 
-                MaterialButton button;
+                final MaterialButton button;
                 if (isSpecialButton(buttonInfo)) {
                     button = createSpecialButton(buttonInfo.getKey(), true);
-                    if (button == null) return;
+                    if (button == null) continue;
                 } else {
                     button = new MaterialButton(getContext(), null, android.R.attr.buttonBarButtonStyle);
                 }
@@ -413,6 +446,8 @@ public final class ExtraKeysView extends GridLayout {
                 button.setTextColor(mButtonTextColor);
                 button.setAllCaps(mButtonTextAllCaps);
                 button.setPadding(0, 0, 0, 0);
+                // ★ 应用当前皮肤造型（圆角/描边/底色），不走 setBackground
+                styleKey(button, mButtonBackgroundColor, false);
 
                 button.setOnClickListener(view -> {
                     performExtraKeyButtonHapticFeedback(view, buttonInfo, button);
@@ -422,37 +457,34 @@ public final class ExtraKeysView extends GridLayout {
                 button.setOnTouchListener((view, event) -> {
                     switch (event.getAction()) {
                         case MotionEvent.ACTION_DOWN:
-                            view.setBackgroundColor(mButtonActiveBackgroundColor);
-                            // Start long press scheduled executors which will be stopped in next MotionEvent
+                            // ★ 按下态只 tint，保留圆角
+                            styleKey((MaterialButton) view, mButtonActiveBackgroundColor, true);
                             startScheduledExecutors(view, buttonInfo, button);
                             return true;
 
                         case MotionEvent.ACTION_MOVE:
                             if (buttonInfo.getPopup() != null) {
-                                // Show popup on swipe up
                                 if (mPopupWindow == null && event.getY() < 0) {
                                     stopScheduledExecutors();
-                                    view.setBackgroundColor(mButtonBackgroundColor);
+                                    styleKey((MaterialButton) view, mButtonBackgroundColor, false);
                                     showPopup(view, buttonInfo.getPopup());
                                 }
                                 if (mPopupWindow != null && event.getY() > 0) {
-                                    view.setBackgroundColor(mButtonActiveBackgroundColor);
+                                    styleKey((MaterialButton) view, mButtonActiveBackgroundColor, true);
                                     dismissPopup();
                                 }
                             }
                             return true;
 
                         case MotionEvent.ACTION_CANCEL:
-                            view.setBackgroundColor(mButtonBackgroundColor);
+                            styleKey((MaterialButton) view, mButtonBackgroundColor, false);
                             stopScheduledExecutors();
                             return true;
 
                         case MotionEvent.ACTION_UP:
-                            view.setBackgroundColor(mButtonBackgroundColor);
+                            styleKey((MaterialButton) view, mButtonBackgroundColor, false);
                             stopScheduledExecutors();
-                            // If ACTION_UP up was not from a repetitive key or was with a key with a popup button
                             if (mLongPressCount == 0 || mPopupWindow != null) {
-                                // Trigger popup button click if swipe up complete
                                 if (mPopupWindow != null) {
                                     dismissPopup();
                                     if (buttonInfo.getPopup() != null) {
@@ -487,7 +519,6 @@ public final class ExtraKeysView extends GridLayout {
     }
 
 
-
     public void onExtraKeyButtonClick(View view, ExtraKeyButton buttonInfo, MaterialButton button) {
         if (mExtraKeysViewClient != null)
             mExtraKeysViewClient.onExtraKeyButtonClick(view, buttonInfo, button);
@@ -495,7 +526,6 @@ public final class ExtraKeysView extends GridLayout {
 
     public void performExtraKeyButtonHapticFeedback(View view, ExtraKeyButton buttonInfo, MaterialButton button) {
         if (mExtraKeysViewClient != null) {
-            // If client handled the feedback, then just return
             if (mExtraKeysViewClient.performExtraKeyButtonHapticFeedback(view, buttonInfo, button))
                 return;
         }
@@ -506,7 +536,6 @@ public final class ExtraKeysView extends GridLayout {
             if (Build.VERSION.SDK_INT >= 28) {
                 button.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             } else {
-                // Perform haptic feedback only if no total silence mode enabled.
                 if (Settings.Global.getInt(getContext().getContentResolver(), "zen_mode", 0) != 2) {
                     button.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                 }
@@ -515,17 +544,17 @@ public final class ExtraKeysView extends GridLayout {
     }
 
 
-
     public void onAnyExtraKeyButtonClick(View view, @NonNull ExtraKeyButton buttonInfo, MaterialButton button) {
         if (isSpecialButton(buttonInfo)) {
             if (mLongPressCount > 0) return;
             SpecialButtonState state = mSpecialButtons.get(SpecialButton.valueOf(buttonInfo.getKey()));
             if (state == null) return;
 
-            // Toggle active state and disable lock state if new state is not active
             state.setIsActive(!state.isActive);
             if (!state.isActive)
                 state.setIsLocked(false);
+            // ★ 状态变化立即重绘圆角/配色
+            refreshButtonColors();
         } else {
             onExtraKeyButtonClick(view, buttonInfo, button);
         }
@@ -536,18 +565,12 @@ public final class ExtraKeysView extends GridLayout {
         stopScheduledExecutors();
         mLongPressCount = 0;
         if (mRepetitiveKeys.contains(buttonInfo.getKey())) {
-            // Auto repeat key if long pressed until ACTION_UP stops it by calling stopScheduledExecutors.
-            // Currently, only one (last) repeat key can run at a time. Old ones are stopped.
             mScheduledExecutor = Executors.newSingleThreadScheduledExecutor();
             mScheduledExecutor.scheduleWithFixedDelay(() -> {
                 mLongPressCount++;
                 onExtraKeyButtonClick(view, buttonInfo, button);
             }, mLongPressTimeout, mLongPressRepeatDelay, TimeUnit.MILLISECONDS);
         } else if (isSpecialButton(buttonInfo)) {
-            // Lock the key if long pressed by running mSpecialButtonsLongHoldRunnable after
-            // waiting for mLongPressTimeout milliseconds. If user does not long press, then the
-            // ACTION_UP triggered will cancel the runnable by calling stopScheduledExecutors before
-            // it has a chance to run.
             SpecialButtonState state = mSpecialButtons.get(SpecialButton.valueOf(buttonInfo.getKey()));
             if (state == null) return;
             if (mHandler == null)
@@ -577,13 +600,12 @@ public final class ExtraKeysView extends GridLayout {
         }
 
         public void run() {
-            // Toggle active and lock state
             mState.setIsLocked(!mState.isActive);
             mState.setIsActive(!mState.isActive);
             mLongPressCount++;
+            refreshButtonColors();
         }
     }
-
 
 
     void showPopup(View view, ExtraKeyButton extraButton) {
@@ -606,7 +628,7 @@ public final class ExtraKeysView extends GridLayout {
         button.setMinimumHeight(0);
         button.setWidth(width);
         button.setHeight(height);
-        button.setBackgroundColor(mButtonActiveBackgroundColor);
+        styleKey(button, mButtonActiveBackgroundColor, true);
         mPopupWindow = new PopupWindow(this);
         mPopupWindow.setWidth(LayoutParams.WRAP_CONTENT);
         mPopupWindow.setHeight(LayoutParams.WRAP_CONTENT);
@@ -623,7 +645,6 @@ public final class ExtraKeysView extends GridLayout {
     }
 
 
-
     /** Check whether a {@link ExtraKeyButton} is a {@link SpecialButton}. */
     public boolean isSpecialButton(ExtraKeyButton button) {
         return mSpecialButtonsKeys.contains(button.getKey());
@@ -631,13 +652,6 @@ public final class ExtraKeysView extends GridLayout {
 
     /**
      * Read whether {@link SpecialButton} registered in {@link #mSpecialButtons} is active or not.
-     *
-     * @param specialButton The {@link SpecialButton} to read.
-     * @param autoSetInActive Set to {@code true} if {@link SpecialButtonState#isActive} should be
-     *                        set {@code false} if button is not locked.
-     * @return Returns {@code null} if button does not exist in {@link #mSpecialButtons}. If button
-     *         exists, then returns {@code true} if the button is created in {@link ExtraKeysView}
-     *         and is active, otherwise {@code false}.
      */
     @Nullable
     public Boolean readSpecialButton(SpecialButton specialButton, boolean autoSetInActive) {
@@ -647,7 +661,6 @@ public final class ExtraKeysView extends GridLayout {
         if (!state.isCreated || !state.isActive)
             return false;
 
-        // Disable active state only if not locked
         if (autoSetInActive && !state.isLocked)
             state.setIsActive(false);
 
@@ -660,6 +673,7 @@ public final class ExtraKeysView extends GridLayout {
         state.setIsCreated(true);
         MaterialButton button = new MaterialButton(getContext(), null, android.R.attr.buttonBarButtonStyle);
         button.setTextColor(state.isActive ? mButtonActiveTextColor : mButtonTextColor);
+        styleKey(button, state.isActive ? mButtonActiveBackgroundColor : mButtonBackgroundColor, state.isActive);
         if (needUpdate) {
             state.buttons.add(button);
         }
@@ -667,10 +681,7 @@ public final class ExtraKeysView extends GridLayout {
     }
 
 
-
-    /**
-     * General util function to compute the longest column length in a matrix.
-     */
+    /** General util function to compute the longest column length in a matrix. */
     public static int maximumLength(Object[][] matrix) {
         int m = 0;
         for (Object[] row : matrix)

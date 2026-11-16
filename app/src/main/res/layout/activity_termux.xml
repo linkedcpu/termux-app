@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-
 <com.termux.app.terminal.TermuxActivityRootView
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/activity_termux_root_view"
     android:layout_width="match_parent"
@@ -37,43 +35,34 @@
                 android:scrollbars="vertical"
                 tools:ignore="UnusedAttribute" />
 
-            <!-- ★ 左抽屉：圆角背景 + outline 裁切，内容由 drawer_content 动态填充 -->
-            <LinearLayout
+            <!--
+                ★ 左抽屉：无 background / 无 outline / 无 clipToOutline
+                  圆角·底色·描边·壁纸分支全部由 Theme.surface() 在代码里挂上
+                  内容由 installDrawerPanel() 动态填充
+            -->
+            <FrameLayout
                 android:id="@+id/left_drawer"
                 android:layout_width="240dp"
                 android:layout_height="match_parent"
-                android:layout_marginVertical="8dp"
-                android:layout_gravity="start"
-                android:orientation="vertical"
-                android:background="@drawable/drawer_bg_semi"
-                android:outlineProvider="background"
-                android:clipToOutline="true"
-                android:paddingTop="0dp">
-
-                <!--
-                    ★ settings_button / toggle_keyboard_button / new_session_button 已删除
-                    ★ terminal_sessions_list 此前已删除
-                    抽屉留白，后续可放 帮助 / 关于 / 清空收藏夹 等入口
-                -->
-            </LinearLayout>
+                android:layout_marginVertical="50dp"
+                android:layout_gravity="start" />
         </androidx.drawerlayout.widget.DrawerLayout>
 
+    </RelativeLayout>
+
+        <!-- ★ 扩展键栏：背景不写死，由 reloadActivityStyling() 套主题 -->
         <androidx.viewpager.widget.ViewPager
             android:id="@+id/terminal_toolbar_view_pager"
             android:layout_width="match_parent"
             android:layout_height="38dp"
             android:layout_alignParentBottom="true"
-            android:background="@android:color/black"
             android:visibility="gone" />
-    </RelativeLayout>
-
-    <!-- ========== 底部栏：Session 标签在此 ========== -->
+    <!-- ========== 底部栏：Session 标签在此，背景由 SessionTabBar.render() 套主题 ========== -->
     <RelativeLayout
         android:id="@+id/tab_bar_root"
         android:layout_width="match_parent"
         android:layout_height="32dp"
-        android:minHeight="32dp"
-        android:background="#141414">
+        android:minHeight="32dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -96,6 +85,11 @@
                     android:gravity="center_vertical" />
             </HorizontalScrollView>
 
+            <!--
+                ★ ＋ / ☆ / ≡ 不写 textColor：由
+                  SnippetManager.cacheDrawerButtonColors / tintDrawerButton
+                  按 Theme.ACCENT / Theme.ICON 动态着色
+            -->
             <LinearLayout
                 android:id="@+id/action_group"
                 android:layout_width="0dp"
@@ -112,7 +106,6 @@
                     android:gravity="center"
                     android:text="＋"
                     android:textSize="18sp"
-                    android:textColor="#FFFFFF"
                     android:contentDescription="@string/action_new_session" />
 
                 <TextView
@@ -124,7 +117,6 @@
                     android:gravity="center"
                     android:text="☆"
                     android:textSize="15sp"
-                    android:textColor="#FFFFFF"
                     android:contentDescription="@string/action_snippets" />
 
                 <TextView
@@ -136,7 +128,6 @@
                     android:gravity="center"
                     android:text="≡"
                     android:textSize="16sp"
-                    android:textColor="#FFFFFF"
                     android:contentDescription="@string/action_open_drawer" />
             </LinearLayout>
         </LinearLayout>
