@@ -4,6 +4,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
 import android.text.InputType;
@@ -12,18 +13,20 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import androidx.core.content.ContextCompat;
+import androidx.core.graphics.drawable.DrawableCompat;
+
+import com.termux.R;
 import com.termux.app.terminal.ThemeManager;
 import com.termux.app.terminal.ThemeSpec;
 import com.termux.shared.logger.Logger;
-import com.termux.terminal.TerminalSession;    // ✅ 对
-
+import com.termux.terminal.TerminalSession;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -41,14 +44,24 @@ import java.util.Set;
 
 /**
  * 命令收藏夹 · 内嵌面板版（纯命令版，无 name）
- * 配色：背景用 current()，前景用 foregroundTheme()，绕开壁纸模式强制白字。
+ * 配色：按终端背景亮度自动切换浅底深字 / 深底亮字。
+ * 卡片：半透明玻璃底；无分割线，靠间距分组；右侧按钮紧凑排布。
  */
 public final class SnippetManager {
 
     private static final String TAG = "SnippetManager";
     private static final String FILE = "snippets.json";
-    private static final int CMD_DISP_MAX = 30;
+    private static final int CMD_DISP_MAX = 38;
     private static final String TERMUX_HOME = "/data/data/com.termux/files/home";
+
+    private static final float CARD_ALPHA_LIGHT = 0.55f;  // 浅色主题卡底不透明度
+    private static final float CARD_ALPHA_DARK  = 0.72f;  // 深色主题卡底不透明度
+    private static final int   CARD_GAP_DP      = 6;      // 卡片间距（替代分割线）
+    private static final int   LIGHT_LUM_THRESHOLD = 140; // 背景亮度判定阈值
+
+    private static final int ICON_SIZE_DP  = 15;  // 图标边长
+    private static final int ICON_PAD_H_DP = 5;   // 图标按钮水平内边距
+    private static final int ICON_PAD_V_DP = 5;   // 图标按钮垂直内边距
 
     private final TermuxActivity mAct;
     private final List<CmdItem> mList = new ArrayList<>();
@@ -57,8 +70,8 @@ public final class SnippetManager {
     private View mPanel;
     private LinearLayout mListBox;
 
-    private EditText mBottomInput;
     private TextView mBtnPlus, mBtnClear;
+    private EditText mBottomInput;
     private GradientDrawable mBottomBg;
 
     private boolean mTabMode = false;
@@ -95,13 +108,59 @@ public final class SnippetManager {
                 : ThemeManager.current(mAct);
     }
 
-    private int bg()      { return solid(theme().bgColor, 0xFF12141A); }
-    private int surface() { return shift(bg(), base().textPrimary, 0.06f); }
-    private int stroke()  { return withAlpha(base().textSecondary, 0x40); }
-    private int text()    { return base().textPrimary; }
-    private int sub()     { return base().textSecondary; }
-    private int accent()  { return base().accent; }
-    private int danger()  { return 0xFFE05050; }
+    private int bg()     { return solid(theme().bgColor, 0xFF12141A); }
+    private int accent() { return base().accent; }
+    private int danger() { return 0xFFE05050; }
+
+    /** 终端背景是否偏亮：决定卡片走浅底深字还是深底亮字。 */
+    private boolean lightBg() {
+        int c = bg();
+        int lum = (int) (0.299 * android.graphics.Color.red(c)
+                       + 0.587 * android.graphics.Color.green(c)
+                       + 0.114 * android.graphics.Color.blue(c));
+        return lum > LIGHT_LUM_THRESHOLD;
+    }
+
+    /** 文字主色：浅色主题下把主题前景压暗，与白色卡底拉开对比。 */
+    private int text() {
+        if (!lightBg()) return base().textPrimary;
+        int fg = base().textPrimary;
+        return android.graphics.Color.argb(0xFF,
+                clamp((int) (android.graphics.Color.red(fg)   * 0.25f)),
+                clamp((int) (android.graphics.Color.green(fg) * 0.25f)),
+                clamp((int) (android.graphics.Color.blue(fg)  * 0.25f)));
+    }
+
+    /** 次要文字：浅色主题下由 text() 再降透明度。 */
+    private int sub() {
+        if (!lightBg()) return base().textSecondary;
+        return withAlpha(text(), 0x99);
+    }
+
+    /** 卡片底：浅色主题为半透白雾，深色主题为主题前景压暗后的暗玻璃。 */
+    private int surface() {
+        if (lightBg()) {
+            int a = (int) (0xFF * CARD_ALPHA_LIGHT);
+            return android.graphics.Color.argb(a, 0xFF, 0xFF, 0xFF);
+        }
+        int fg = base().textPrimary;
+        int a = (int) (0xFF * CARD_ALPHA_DARK);
+        return android.graphics.Color.argb(a,
+                clamp((int) (android.graphics.Color.red(fg)   * 0.28f)),
+                clamp((int) (android.graphics.Color.green(fg) * 0.28f)),
+                clamp((int) (android.graphics.Color.blue(fg)  * 0.28f)));
+    }
+
+    /** 描边：跟随当前明暗模式，避免浅色下边框反比卡片更深。 */
+    private int stroke() {
+        if (lightBg()) return withAlpha(text(), 0x2E);
+        return withAlpha(base().textSecondary, 0x2C);
+    }
+
+    /** 展开框底色：浅色下用深字低透，深色下用亮字低透。 */
+    private int expandBoxFill() {
+        return lightBg() ? withAlpha(text(), 0x12) : withAlpha(base().textPrimary, 0x18);
+    }
 
     private int solid(int c, int fb) {
         if (c == 0) return fb;
@@ -192,14 +251,16 @@ public final class SnippetManager {
 
         bottom.addView(mBottomInput, new LinearLayout.LayoutParams(0, -2, 1f));
 
-        mBtnPlus  = flatBtn("＋", accent(), v -> commitBottomInput());
-        mBtnClear = flatBtn("▼", sub(), v -> {
+        int bottomBtnW = dp(ICON_SIZE_DP + ICON_PAD_H_DP * 2);
+        LinearLayout.LayoutParams bottomBtnLp = new LinearLayout.LayoutParams(bottomBtnW, -2);
+        mBtnPlus  = flatBtn(R.drawable.ic_add, accent(), v -> commitBottomInput());
+        mBtnClear = flatBtn(R.drawable.ic_expand, sub(), v -> {
             if (mBottomInput == null) return;
             if (!mBottomInput.getText().toString().isEmpty()) mBottomInput.setText("");
             else collapse();
         });
-        bottom.addView(mBtnPlus);
-        bottom.addView(mBtnClear);
+        bottom.addView(mBtnPlus,  bottomBtnLp);
+        bottom.addView(mBtnClear, bottomBtnLp);
         root.addView(bottom, new LinearLayout.LayoutParams(-1, -2));
 
         syncBottomButtons();
@@ -239,9 +300,13 @@ public final class SnippetManager {
 
     private void syncBottomButtons() {
         boolean has = mBottomInput != null && !mBottomInput.getText().toString().isEmpty();
-        if (mBtnPlus  != null) mBtnPlus.setVisibility(View.VISIBLE);
+        if (mBtnPlus != null) mBtnPlus.setVisibility(View.VISIBLE);
         if (mBtnClear != null) {
-            mBtnClear.setText(has ? "✕" : "▼");
+            String state = has ? "clear" : "collapse";
+            if (!state.equals(mBtnClear.getTag())) {
+                mBtnClear.setTag(state);
+                setBtnIcon(mBtnClear, has ? R.drawable.ic_clear : R.drawable.ic_expand, sub());
+            }
             mBtnClear.setContentDescription(has ? "清空" : "关闭");
         }
     }
@@ -274,13 +339,25 @@ public final class SnippetManager {
             return;
         }
 
+        int btnW = dp(ICON_SIZE_DP + ICON_PAD_H_DP * 2);
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(btnW, -2);
+
+        boolean first = true;
         for (CmdItem item : show) {
             final boolean viewing = (mViewingIdx == indexOfCmd(item.cmd));
+
+            // 卡片间距（替代分割线）：首条不加顶部间距
+            if (!first) {
+                View gap = new View(mAct);
+                gap.setBackgroundColor(0x00000000);
+                mListBox.addView(gap, new LinearLayout.LayoutParams(-1, dp(CARD_GAP_DP)));
+            }
+            first = false;
 
             LinearLayout card = new LinearLayout(mAct);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setBackground(cardBg(surface(), stroke()));
-            card.setPadding(dp(12), dp(9), dp(14), dp(9));
+            card.setPadding(dp(12), dp(9), dp(10), dp(9));
             card.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
 
             LinearLayout row = new LinearLayout(mAct);
@@ -297,12 +374,12 @@ public final class SnippetManager {
             cmd.setEllipsize(android.text.TextUtils.TruncateAt.END);
             cmd.setHorizontallyScrolling(true);
             cmd.setMaxWidth(Integer.MAX_VALUE);
-            cmd.setPadding(0, 0, dp(8), 0);
+            cmd.setPadding(0, 0, dp(4), 0);
             row.addView(cmd, new LinearLayout.LayoutParams(0, -2, 1f));
 
-            row.addView(flatBtn("▶", accent(), v -> actionRun(item)));
-            row.addView(flatBtn("⚑", accent(), v -> actionPin(item)));
-            row.addView(flatBtn("🗑", danger(),  v -> actionDelete(item)));
+            row.addView(flatBtn(R.drawable.ic_play,   accent(), v -> actionRun(item)),   btnLp);
+            row.addView(flatBtn(R.drawable.ic_pin,    accent(), v -> actionPin(item)),   btnLp);
+            row.addView(flatBtn(R.drawable.ic_delete, danger(), v -> actionDelete(item)), btnLp);
             card.addView(row, new LinearLayout.LayoutParams(-1, -2));
 
             card.setClickable(true);
@@ -313,7 +390,6 @@ public final class SnippetManager {
             if (viewing) card.addView(buildExpandBox(item), new LinearLayout.LayoutParams(-1, -2));
 
             mListBox.addView(card, new LinearLayout.LayoutParams(-1, -2));
-            mListBox.addView(divider(), new LinearLayout.LayoutParams(-1, dp(1)));
         }
     }
 
@@ -330,7 +406,7 @@ public final class SnippetManager {
         int dp = dp(1);
         LinearLayout box = new LinearLayout(mAct);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setBackground(pill(bg(), dp(8)));
+        box.setBackground(pill(expandBoxFill(), dp(8)));
         box.setPadding(dp(10), dp(6), dp(10), dp(6));
 
         LinearLayout sub = new LinearLayout(mAct);
@@ -369,6 +445,9 @@ public final class SnippetManager {
         return box;
     }
 
+    /* ================= 按钮 ================= */
+
+    /** 文字按钮（底部栏 ＋ 曾用；保留备用）。 */
     private TextView flatBtn(String glyph, int color, View.OnClickListener onClick) {
         int dp = dp(1);
         TextView b = new TextView(mAct);
@@ -384,6 +463,38 @@ public final class SnippetManager {
             return false;
         });
         return b;
+    }
+
+    /** 图标按钮：紧凑尺寸，宽度固定不抢命令文字空间。 */
+    private TextView flatBtn(int iconRes, int color, View.OnClickListener onClick) {
+        int dp = dp(1);
+        TextView b = new TextView(mAct);
+        b.setTextColor(color);
+        b.setTextSize(13f);
+        b.setGravity(Gravity.CENTER);
+        b.setClickable(true); b.setFocusable(true);
+        b.setBackgroundResource(selectableItemBg());
+        b.setPadding(dp(ICON_PAD_H_DP), dp(ICON_PAD_V_DP), dp(ICON_PAD_H_DP), dp(ICON_PAD_V_DP));
+        b.setText("");
+        setBtnIcon(b, iconRes, color);
+        b.setOnClickListener(onClick);
+        b.setOnTouchListener((v, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) b.setAlpha(0.5f);
+            else if (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL) b.setAlpha(1f);
+            return false;
+        });
+        return b;
+    }
+
+    private void setBtnIcon(TextView btn, int iconRes, int color) {
+        Drawable d = ContextCompat.getDrawable(mAct, iconRes);
+        if (d == null) return;
+        d = DrawableCompat.wrap(d).mutate();
+        DrawableCompat.setTint(d, color);
+        int size = dp(ICON_SIZE_DP);
+        d.setBounds(0, 0, size, size);
+        btn.setCompoundDrawables(null, null, d, null);
+        btn.setCompoundDrawablePadding(0);  // 无文字，间距归零
     }
 
     /* ================= 动作 ================= */
@@ -550,7 +661,7 @@ public final class SnippetManager {
                 try {
                     String s = new String(Files.readAllBytes(lf.toPath()),
                             java.nio.charset.StandardCharsets.UTF_8);
-                    if (s == null || s.trim().isEmpty()) continue;   // 见下方修正
+                    if (s == null || s.trim().isEmpty()) continue;
                     JSONArray arr = new JSONArray(s);
                     for (int i = 0; i < arr.length(); i++) {
                         JSONObject o = arr.optJSONObject(i);
@@ -583,7 +694,7 @@ public final class SnippetManager {
                 }
             }
         } catch (Exception e) {
-            Logger.logVerbose(TAG, "migrateLegacy skipped: " + e.getMessage());
+            Logger.logVerbose(TAG, "migrateLegacySkipped: " + e.getMessage());
         }
     }
 
@@ -615,6 +726,8 @@ public final class SnippetManager {
         return d;
     }
 
+    /** 保留以便回退；当前列表已改用透明间距分组，不再调用。 */
+    @SuppressWarnings("unused")
     private View divider() {
         View v = new View(mAct);
         v.setBackgroundColor(stroke());
