@@ -235,4 +235,8 @@
     <!-- Donate Preference -->
     <string name="donate_preference_title">Donate</string>
 
+    <string name="action_snippets">Snippets</string>
+    <string name="action_open_drawer">Open menu</string>
+    <string name="drawer_version_format">Termux · v%s</string>
+
 </resources>

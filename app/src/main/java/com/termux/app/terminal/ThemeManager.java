@@ -33,6 +33,15 @@ public final class ThemeManager {
     public static void setWallpaper(Context c, String path) {
         prefs(c).edit().putString(KEY_WALLPAPER, path).apply();
     }
+    /**
+     * ★ 前景色专用主题：壁纸模式下 ThemeSpec.wallpaper() 会把 textPrimary/textSecondary
+     *   强制改成白色（为叠加在图片上设计），但各组件背景色来自 bgColor（浅色主题仍是浅底），
+     *   浅底白字必然隐形。因此所有「文字 / 图标 / 描边」等前景色一律通过本方法取色，
+     *   绕开被污染的 wallpaper 主题；背景色仍用 ThemeManager.current()。
+     */
+    public static ThemeSpec foregroundTheme(android.content.Context c) {
+        return hasWallpaper(c) ? ThemeSpec.preset(currentPresetIndex(c)) : current(c);
+    }
 
     public static void clearWallpaper(Context c) {
         prefs(c).edit().remove(KEY_WALLPAPER).apply();

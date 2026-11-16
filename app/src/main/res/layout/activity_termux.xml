@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    ★ 左抽屉内的按钮行（settings / 键盘 / 新建）已移除，抽屉现为空白面板。
-    session 切换 / 新建 / 菜单 统一由底部 SessionTabBar + TerminalContextMenu 承担。
--->
+
 <com.termux.app.terminal.TermuxActivityRootView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -40,15 +37,18 @@
                 android:scrollbars="vertical"
                 tools:ignore="UnusedAttribute" />
 
-            <!-- ★ 左抽屉：按钮行已删除，仅保留空白面板 -->
+            <!-- ★ 左抽屉：圆角背景 + outline 裁切，内容由 drawer_content 动态填充 -->
             <LinearLayout
                 android:id="@+id/left_drawer"
                 android:layout_width="240dp"
                 android:layout_height="match_parent"
+                android:layout_marginVertical="8dp"
                 android:layout_gravity="start"
                 android:orientation="vertical"
-                android:background="?attr/termuxActivityDrawerBackground"
-                android:paddingTop="8dp">
+                android:background="@drawable/drawer_bg_semi"
+                android:outlineProvider="background"
+                android:clipToOutline="true"
+                android:paddingTop="0dp">
 
                 <!--
                     ★ settings_button / toggle_keyboard_button / new_session_button 已删除
@@ -61,7 +61,7 @@
         <androidx.viewpager.widget.ViewPager
             android:id="@+id/terminal_toolbar_view_pager"
             android:layout_width="match_parent"
-            android:layout_height="37.5dp"
+            android:layout_height="38dp"
             android:layout_alignParentBottom="true"
             android:background="@android:color/black"
             android:visibility="gone" />
@@ -112,7 +112,8 @@
                     android:gravity="center"
                     android:text="＋"
                     android:textSize="18sp"
-                    android:textColor="#FFFFFF" />
+                    android:textColor="#FFFFFF"
+                    android:contentDescription="@string/action_new_session" />
 
                 <TextView
                     android:id="@+id/snippet_button"
@@ -123,7 +124,8 @@
                     android:gravity="center"
                     android:text="☆"
                     android:textSize="15sp"
-                    android:textColor="#FFFFFF" />
+                    android:textColor="#FFFFFF"
+                    android:contentDescription="@string/action_snippets" />
 
                 <TextView
                     android:id="@+id/drawer_menu_button"
@@ -134,7 +136,8 @@
                     android:gravity="center"
                     android:text="≡"
                     android:textSize="16sp"
-                    android:textColor="#FFFFFF" />
+                    android:textColor="#FFFFFF"
+                    android:contentDescription="@string/action_open_drawer" />
             </LinearLayout>
         </LinearLayout>
     </RelativeLayout>

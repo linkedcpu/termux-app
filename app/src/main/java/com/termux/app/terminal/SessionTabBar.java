@@ -26,14 +26,13 @@ import java.util.List;
 /**
  * ★ 底部 Session 标签栏 + 标签抽屉（PopupWindow）
  *
- * 配色跟随 ThemeManager 的界面主题，不再写死十六进制。
- * 行为与原实现一致：整条可点切换、三点弹抽屉、空列表整栏 GONE。
+ * 配色约定：背景色用 ThemeManager.current().bgColor，
+ *          所有前景色（文字/图标/描边）一律用 ThemeManager.foregroundTheme()，
+ *          绕开壁纸模式下被强制改成白色的 textPrimary。
  */
 public final class SessionTabBar {
 
-    /** 抽屉底边与标签顶边之间的呼吸缝（dp）。0 = 无缝。 */
     private static final int DRAWER_GAP_DP = 6;
-    /** 标签宽度（px）。 */
     static final int TAG_WIDTH_PX = 288;
 
     private final TermuxActivity mActivity;
@@ -75,13 +74,12 @@ public final class SessionTabBar {
     }
 
     public void render() {
-        List<?> sessions = mActivity.getTermuxService() == null
-                ? null : mActivity.getTermuxService().getTermuxSessions();
+        List<?> sessions = sessionList();
         boolean isEmpty = sessions == null || sessions.isEmpty();
         applyVisibility(isEmpty);
         if (isEmpty) return;
 
-        mRoot.setBackgroundColor(barBg());          // ★ 跟随主题
+        mRoot.setBackgroundColor(barBg());
         mContainer.removeAllViews();
 
         TerminalSession current = mActivity.getCurrentSession();
@@ -114,8 +112,7 @@ public final class SessionTabBar {
     }
 
     public void ensureVisible() {
-        List<?> sessions = mActivity.getTermuxService() == null
-                ? null : mActivity.getTermuxService().getTermuxSessions();
+        List<?> sessions = sessionList();
         if (sessions == null || sessions.isEmpty()) return;
         if (!mVisible) {
             mVisible = true;
@@ -135,6 +132,13 @@ public final class SessionTabBar {
     public boolean isVisibleNow() { return mVisible; }
 
     public void detach() { dismissPopup(); }
+
+    /* ================= 内部工具 ================= */
+
+    private List<?> sessionList() {
+        return mActivity.getTermuxService() == null
+                ? null : mActivity.getTermuxService().getTermuxSessions();
+    }
 
     /* ================= 标签项 ================= */
 
@@ -157,17 +161,17 @@ public final class SessionTabBar {
         boolean isActive = current != null && current == session;
         if (isActive) {
             line.setVisibility(View.VISIBLE);
-            line.setBackgroundColor(accent());            // ★ 顶边线用强调色
-            itemRoot.setBackgroundColor(tabActive());     // ★
-            title.setTextColor(titleActive());           // ★
-            icon.setColorFilter(accent());               // ★
-            more.setColorFilter(accent());               // ★
+            line.setBackgroundColor(accent());
+            itemRoot.setBackgroundColor(tabActive());
+            title.setTextColor(titleActive());
+            icon.setColorFilter(accent());
+            more.setColorFilter(accent());
         } else {
             line.setVisibility(View.GONE);
-            itemRoot.setBackgroundColor(tabNormal());    // ★
-            title.setTextColor(titleNormal());           // ★
-            icon.setColorFilter(iconNormal());           // ★
-            more.setColorFilter(iconNormal());           // ★
+            itemRoot.setBackgroundColor(tabNormal());
+            title.setTextColor(titleNormal());
+            icon.setColorFilter(iconNormal());
+            more.setColorFilter(iconNormal());
         }
 
         itemRoot.setOnClickListener(v -> {
@@ -211,13 +215,14 @@ public final class SessionTabBar {
 
         View content = mActivity.getLayoutInflater().inflate(R.layout.popup_tab_menu, null);
 
-        // ★ 抽屉背景跟随主题：圆角 + 细描边
         GradientDrawable pd = new GradientDrawable();
         pd.setShape(GradientDrawable.RECTANGLE);
         pd.setCornerRadius(dp(12));
-        pd.setColor(barBg());
-        pd.setStroke(dp(1), withAlpha(theme().textSecondary, 0x30));
+        pd.setColor(drawerBg());
+        pd.setStroke(dp(1), withAlpha(drawerTextSecondaryColor(), 0x30));
         content.setBackground(pd);
+
+        applyDrawerTextColors(content);
 
         content.measure(
                 View.MeasureSpec.makeMeasureSpec(anchorW, View.MeasureSpec.EXACTLY),
@@ -267,14 +272,49 @@ public final class SessionTabBar {
         });
     }
 
+    /** 把抽屉内所有文字/分隔线染成主题色，覆盖布局与样式里写死的颜色 */
+    private void applyDrawerTextColors(View content) {
+        if (content == null) return;
+        int primary = drawerTextColor();
+        int secondary = drawerTextSecondaryColor();
+
+        int[] textIds = {R.id.item_rename, R.id.item_reset, R.id.item_kill, R.id.item_close};
+        for (int id : textIds) {
+            View v = content.findViewById(id);
+            if (v instanceof TextView) {
+                ((TextView) v).setTextColor(primary);
+            }
+        }
+
+        View divider = content.findViewById(R.id.tab_popup_divider);
+        if (divider != null) {
+            divider.setBackgroundColor(withAlpha(secondary, 0x33));
+        }
+
+        if (content instanceof ViewGroup) {
+            tintRemainingTexts((ViewGroup) content, primary);
+        }
+    }
+
+    private void tintRemainingTexts(ViewGroup group, int color) {
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child instanceof TextView) {
+                ((TextView) child).setTextColor(color);
+            } else if (child instanceof ViewGroup) {
+                tintRemainingTexts((ViewGroup) child, color);
+            }
+        }
+    }
+
     /* ================= 显隐 / 尺寸 ================= */
 
     private void captureOriginalHeight() {
         int h = mRoot.getHeight();
         if (h <= 0) h = (int) (40 * mRoot.getResources().getDisplayMetrics().density);
         mOriginalHeight = h;
-        boolean isEmpty = mActivity.getTermuxService() == null
-                || mActivity.getTermuxService().getTermuxSessions().isEmpty();
+        List<?> sessions = sessionList();
+        boolean isEmpty = sessions == null || sessions.isEmpty();
         applyVisibility(isEmpty);
     }
 
@@ -293,7 +333,7 @@ public final class SessionTabBar {
         EditText input = new EditText(mActivity);
         input.setText(session.mSessionName);
         input.setSingleLine(true);
-        input.setTextColor(titleActive());                       // ★
+        input.setTextColor(titleActive());
         new AlertDialog.Builder(mActivity)
                 .setTitle("重命名会话")
                 .setView(input)
@@ -308,24 +348,48 @@ public final class SessionTabBar {
                 .show();
     }
 
-    /* ================= 调色：跟随界面主题 ================= */
+    /* ================= 调色 ================= */
 
     private ThemeSpec theme() { return ThemeManager.current(mActivity); }
 
-    /** 栏底：比面板底色再深一档，和抽屉拉开层次 */
+    /** ★ 前景色统一走 foregroundTheme，绕开壁纸模式下的强制白字 */
+    private ThemeSpec baseTheme() { return ThemeManager.foregroundTheme(mActivity); }
+
     private int barBg()      { return shade(theme().bgColor, -0x10); }
-    /** 选中标签：面板底色提亮 */
     private int tabActive()  { return shade(theme().bgColor, +0x14); }
-    /** 未选中标签：面板底色压暗 */
     private int tabNormal()  { return shade(theme().bgColor, -0x22); }
-    private int titleActive()  { return theme().textPrimary; }
-    private int titleNormal()  { return theme().textSecondary; }
-    private int accent()       { return theme().accent; }
-    private int iconNormal()   { return withAlpha(theme().textSecondary, 0x90); }
+
+    private int titleActive()  { return baseTheme().textPrimary; }
+    private int titleNormal()  { return baseTheme().textSecondary; }
+    private int accent()       { return baseTheme().accent; }
+    private int iconNormal()   { return withAlpha(baseTheme().textSecondary, 0x90); }
+
+    private int drawerBg() {
+        if (ThemeManager.hasWallpaper(mActivity)) {
+            return theme().useLightTextOnWallpaper()
+                    ? blend(0xFF141414, theme().bgColor)
+                    : blend(0xFFF7F7F5, theme().bgColor);
+        }
+        return barBg();
+    }
+
+    private int drawerTextColor() {
+        if (ThemeManager.hasWallpaper(mActivity)) {
+            return theme().useLightTextOnWallpaper() ? 0xFFFFFFFF : baseTheme().textPrimary;
+        }
+        return baseTheme().textPrimary;
+    }
+
+    private int drawerTextSecondaryColor() {
+        if (ThemeManager.hasWallpaper(mActivity)) {
+            return theme().useLightTextOnWallpaper() ? 0xCCFFFFFF : baseTheme().textSecondary;
+        }
+        return baseTheme().textSecondary;
+    }
 
     private int shade(int base, int delta) {
         int c = (base == 0) ? 0xFF141414 : base;
-        if (Color.alpha(c) != 0xFF) c = blend(0xFF141414, c);   // 半透明主题垫底
+        if (Color.alpha(c) != 0xFF) c = blend(0xFF141414, c);
         return Color.argb(0xFF,
                 clamp(Color.red(c)   + delta),
                 clamp(Color.green(c) + delta),

@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -19,7 +20,6 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
@@ -62,15 +62,16 @@ import com.termux.shared.view.ViewUtils;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 
-import org.json.JSONException;
-import org.json.JSONObject;
-
 /**
  * Termux 主界面
  *
  * <p>★ 左抽屉 = 独立 DrawerPanel（菜单 + 收藏夹 + 更多）
  * <p>★ 底部   = SessionTabBar（标签 / ＋ / ☆ / ≡）
  * <p>★ 长按   = TerminalContextMenu
+ *
+ * <p>☆ / ≡ 为「导航专用」按钮：点击永远打开抽屉并跳到对应页；抽屉已开则直接跨 Tab 切换，
+ * 永不负责关闭。关闭交由抽屉原生方式（侧滑 / 点遮罩 / 返回键）。
+ * 高亮为纯查询结果：抽屉开着 且 当前页匹配（☆ 还需收藏面板展开）。
  */
 public final class TermuxActivity extends AppCompatActivity implements ServiceConnection {
 
@@ -101,30 +102,16 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private DrawerPanel mDrawerPanel;
     private TerminalContextMenu mContextMenu;
 
+    /** ★ 高亮色缓存（换肤时刷新） */
+    private int mAccentColor = 0xFF9800;
+    private int mNormalColor = 0xFF8A8A8A;
+
+    private static final String TAB_SNIPPET = "snippet";
+    private static final String TAB_MORE = "more";
+
     private static final String ARG_TERMINAL_TOOLBAR_TEXT_INPUT = "terminal_toolbar_text_input";
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
     private static final String LOG_TAG = "TermuxActivity";
-
-    static final class Snippet {
-        final String name;
-        final String cmd;
-
-        Snippet(String n, String c) {
-            name = n == null ? "" : n.trim();
-            cmd = c == null ? "" : c.trim();
-        }
-
-        JSONObject toJson() throws JSONException {
-            JSONObject o = new JSONObject();
-            o.put("name", name);
-            o.put("cmd", cmd);
-            return o;
-        }
-
-        static Snippet fromJson(JSONObject o) throws JSONException {
-            return new Snippet(o.optString("name", ""), o.optString("cmd", ""));
-        }
-    }
 
     /* ========================================================= */
     /* 生命周期                                                   */
@@ -175,8 +162,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setTerminalToolbarView(savedInstanceState);
         installDrawerPanel();
-        setupBottomSnippetButton();   // ☆ → 抽屉·收藏夹
-        setupDrawerButtons();         // ≡ → 抽屉·更多
+        setupDrawerListener();
+        bindDrawerToggle(R.id.snippet_button, TAB_SNIPPET);
+        bindDrawerToggle(R.id.drawer_menu_button, TAB_MORE);
 
         mSessionTabBar =
                 new SessionTabBar(
@@ -308,6 +296,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             mSessionTabBar.ensureVisible();
             mSessionTabBar.render();
         }
+        syncDrawerButtonHighlights();
     }
 
     @Override
@@ -322,7 +311,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (mTermuxTerminalViewClient != null) mTermuxTerminalViewClient.onStop();
         removeTermuxActivityRootViewGlobalLayoutListener();
         unregisterTermuxActivityBroadcastReceiver();
-        getDrawer().closeDrawers();
+        getDrawer().closeDrawers();   // 关闭不碰高亮，onDrawerClosed 统一处理
         if (mSnippetMgr != null) mSnippetMgr.save();
     }
 
@@ -420,6 +409,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         leftDrawer.removeAllViews();
 
         mDrawerPanel = new DrawerPanel(this);
+        mDrawerPanel.setOnTabChanged(this::syncDrawerButtonHighlights);
 
         LinearLayout.LayoutParams lp =
                 new LinearLayout.LayoutParams(
@@ -428,11 +418,30 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         leftDrawer.addView(mDrawerPanel.getView(), lp);
     }
 
-    /** ★ 主题联动：抽屉 / 收藏夹 / 标签栏一起刷新 */
+    /** ★ 抽屉开关时同步高亮：不收面板、不清标志位 */
+    private void setupDrawerListener() {
+        DrawerLayout drawer = getDrawer();
+        if (drawer == null) return;
+        drawer.addDrawerListener(new DrawerLayout.SimpleDrawerListener() {
+            @Override
+            public void onDrawerClosed(View drawerView) {
+                syncDrawerButtonHighlights();
+            }
+
+            @Override
+            public void onDrawerOpened(View drawerView) {
+                syncDrawerButtonHighlights();
+            }
+        });
+    }
+
+    /** ★ 主题联动：抽屉 / 收藏夹 / 标签栏 / ☆ ≡ 一起刷新 */
     private void applyThemeToUi() {
+        cacheDrawerButtonColors();
         if (mDrawerPanel != null) mDrawerPanel.reloadTheme();
         if (mSnippetMgr != null && mSnippetMgr.isExpanded()) mSnippetMgr.reloadTheme();
         if (mSessionTabBar != null) mSessionTabBar.render();
+        syncDrawerButtonHighlights();
     }
 
     /** 供 DrawerPanel 切主题后触发统一套色 */
@@ -441,26 +450,21 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     /* ========================================================= */
-    /* ★ Session 栏 ☆ / ≡ → 打开抽屉并跳 Tab                     */
+    /* ★ 底部 ☆ / ≡ ：导航专用（永不关闭抽屉）                    */
     /* ========================================================= */
 
-    /** ☆ = 打开抽屉并跳到「收藏夹」 */
-    private void setupBottomSnippetButton() {
-        View star = findViewById(R.id.snippet_button);
-        if (star == null) {
-            Logger.logWarn(LOG_TAG, "snippet_button 未找到，收藏夹按钮不生效");
-            return;
-        }
-        star.setOnClickListener(v -> openDrawerTab("snippet"));
+    /** 绑定一个导航按钮：点击永远打开抽屉并跳到 tabKey 对应页 */
+    private void bindDrawerToggle(int btnId, final String tabKey) {
+        View btn = findViewById(btnId);
+        if (btn == null) return;
+        btn.setOnClickListener(v -> {
+            openDrawerTab(tabKey);
+            syncDrawerButtonHighlights();
+        });
+        syncDrawerButtonHighlights();
     }
 
-    /** ≡ = 打开抽屉并跳到「更多」 */
-    private void setupDrawerButtons() {
-        View mb = findViewById(R.id.drawer_menu_button);
-        if (mb != null) mb.setOnClickListener(v -> openDrawerTab("more"));
-    }
-
-    /** 打开左抽屉并切到指定 Tab；抽屉未就绪时兜底只开抽屉 */
+    /** 打开左抽屉并切到指定 Tab（openDrawer 幂等：已开时仅切页） */
     private void openDrawerTab(@NonNull String tabKey) {
         DrawerLayout drawer = getDrawer();
         if (drawer == null) {
@@ -473,6 +477,49 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         } else {
             Logger.logWarn(LOG_TAG, "DrawerPanel 未就绪，tabKey=" + tabKey);
         }
+        syncDrawerButtonHighlights();
+    }
+
+    /** 统一刷新 ☆ / ≡ 高亮：抽屉开着 且 停在对应页（☆ 额外要求面板展开） */
+    private void syncDrawerButtonHighlights() {
+        tintDrawerButton(R.id.snippet_button,
+                isDrawerOnTab(TAB_SNIPPET) && isSnippetExpanded());
+        tintDrawerButton(R.id.drawer_menu_button, isDrawerOnTab(TAB_MORE));
+    }
+
+    private boolean isDrawerOnTab(String tabKey) {
+        DrawerLayout d = getDrawer();
+        if (d == null || !d.isDrawerOpen(Gravity.LEFT)) return false;
+        return mDrawerPanel != null && mDrawerPanel.isCurrentTab(tabKey);
+    }
+
+    private void tintDrawerButton(int btnId, boolean active) {
+        View btn = findViewById(btnId);
+        if (btn == null) return;
+        int color = active ? mAccentColor : mNormalColor;
+        if (btn instanceof android.widget.TextView) {
+            ((android.widget.TextView) btn).setTextColor(color);
+        }
+        if (btn instanceof android.widget.ImageView) {
+            ((android.widget.ImageView) btn).setColorFilter(color);
+        }
+        btn.invalidate();
+    }
+
+    private void cacheDrawerButtonColors() {
+        try {
+            com.termux.app.terminal.ThemeSpec t =
+                    com.termux.app.terminal.ThemeManager.current(this);
+            mAccentColor = t.accent;
+            mNormalColor = t.textSecondary;
+        } catch (Throwable ignored) {
+            mAccentColor = Color.parseColor("#FF9800");
+            mNormalColor = Color.parseColor("#8A8A8A");
+        }
+    }
+
+    private boolean isSnippetExpanded() {
+        return mSnippetMgr != null && mSnippetMgr.isExpanded();
     }
 
     /* ========================================================= */
@@ -488,6 +535,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
 
         mSnippetMgr = new SnippetManager(this);
+        mSnippetMgr.setOnStateChanged(this::syncDrawerButtonHighlights);
 
         ViewGroup parent = (ViewGroup) tv.getParent();
         if (parent == null) return;
@@ -510,6 +558,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         parent.addView(wrapper, idx, tv.getLayoutParams());
         mSnippetMgr.collapse();
+        cacheDrawerButtonColors();
+        syncDrawerButtonHighlights();
     }
 
     /* ========================================================= */
@@ -1019,11 +1069,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public void onBackPressed() {
         if (mSessionTabBar != null && mSessionTabBar.onBackPressed()) return;
         if (getDrawer().isDrawerOpen(Gravity.LEFT)) {
-            getDrawer().closeDrawers();
+            getDrawer().closeDrawers();   // 关闭不碰高亮，onDrawerClosed 统一处理
             return;
         }
         if (mSnippetMgr != null && mSnippetMgr.isExpanded()) {
             mSnippetMgr.collapse();
+            syncDrawerButtonHighlights();
             return;
         }
         finishActivityIfNotFinishing();
@@ -1043,10 +1094,5 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     private int dp(int dp) {
         return Math.round(dp * getResources().getDisplayMetrics().density);
-    }
-
-    private int getStatusBarHeight() {
-        int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
-        return resId > 0 ? getResources().getDimensionPixelSize(resId) : dp(24);
     }
 }

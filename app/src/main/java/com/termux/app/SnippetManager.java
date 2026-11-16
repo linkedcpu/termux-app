@@ -7,7 +7,6 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
 import android.text.InputType;
-import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -23,7 +22,8 @@ import android.widget.TextView;
 import com.termux.app.terminal.ThemeManager;
 import com.termux.app.terminal.ThemeSpec;
 import com.termux.shared.logger.Logger;
-import com.termux.terminal.TerminalSession;
+import com.termux.terminal.TerminalSession;    // ✅ 对
+
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -41,7 +41,7 @@ import java.util.Set;
 
 /**
  * 命令收藏夹 · 内嵌面板版（纯命令版，无 name）
- * 视觉与 DrawerPanel 对齐，配色跟随 ThemeManager 的界面主题。
+ * 配色：背景用 current()，前景用 foregroundTheme()，绕开壁纸模式强制白字。
  */
 public final class SnippetManager {
 
@@ -64,21 +64,43 @@ public final class SnippetManager {
     private boolean mTabMode = false;
     public void setTabMode(boolean tabMode) { mTabMode = tabMode; }
 
+    /* ================= 状态回调 ================= */
+
+    public interface OnStateChanged { void onStateChanged(boolean expanded); }
+
+    private OnStateChanged mOnStateChanged;
+
+    public void setOnStateChanged(OnStateChanged cb) { mOnStateChanged = cb; }
+
+    public void setOnStateChanged(final Runnable r) {
+        mOnStateChanged = r == null ? null : expanded -> r.run();
+    }
+
+    private void notifyStateChanged() {
+        if (mOnStateChanged != null) mOnStateChanged.onStateChanged(mExpanded);
+    }
+
     public static final class CmdItem {
         public final String cmd;
         public CmdItem(String cmd) { this.cmd = cmd == null ? "" : cmd.trim(); }
     }
 
-    /* ================= 调色：跟随界面主题 ================= */
+    /* ================= 调色 ================= */
 
     private ThemeSpec theme() { return ThemeManager.current(mAct); }
 
+    private ThemeSpec base() {
+        return ThemeManager.hasWallpaper(mAct)
+                ? ThemeSpec.preset(ThemeManager.currentPresetIndex(mAct))
+                : ThemeManager.current(mAct);
+    }
+
     private int bg()      { return solid(theme().bgColor, 0xFF12141A); }
-    private int surface() { return shift(bg(), theme().textPrimary, 0.06f); }
-    private int stroke()  { return withAlpha(theme().textSecondary, 0x40); }
-    private int text()    { return theme().textPrimary; }
-    private int sub()     { return theme().textSecondary; }
-    private int accent()  { return theme().accent; }
+    private int surface() { return shift(bg(), base().textPrimary, 0.06f); }
+    private int stroke()  { return withAlpha(base().textSecondary, 0x40); }
+    private int text()    { return base().textPrimary; }
+    private int sub()     { return base().textSecondary; }
+    private int accent()  { return base().accent; }
     private int danger()  { return 0xFFE05050; }
 
     private int solid(int c, int fb) {
@@ -113,7 +135,6 @@ public final class SnippetManager {
 
     public SnippetManager(TermuxActivity act) { mAct = act; migrateLegacy(); load(); }
 
-    /** ★ 供 DrawerPanel / TermuxActivity 切主题后调用：按新主题重绘 */
     public void reloadTheme() {
         if (mPanel == null) return;
         if (mBottomInput != null) mBottomInput.setTextColor(text());
@@ -191,14 +212,20 @@ public final class SnippetManager {
         mExpanded = true;
         load(); mViewingIdx = -1; syncBottomButtons(); render();
         mPanel.setVisibility(View.VISIBLE);
+        notifyStateChanged();
     }
 
     public void collapse() {
+        boolean was = mExpanded;
         mExpanded = false; mViewingIdx = -1;
-        if (mPanel == null) return;
+        if (mPanel == null) {
+            if (was) notifyStateChanged();
+            return;
+        }
         if (mBottomInput != null) mBottomInput.setText("");
         mPanel.clearFocus();
         mPanel.setVisibility(View.GONE);
+        if (was) notifyStateChanged();
     }
 
     public boolean isExpanded() { return mExpanded; }
@@ -253,7 +280,7 @@ public final class SnippetManager {
             LinearLayout card = new LinearLayout(mAct);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setBackground(cardBg(surface(), stroke()));
-            card.setPadding(dp(12), dp(9), dp(10), dp(9));
+            card.setPadding(dp(12), dp(9), dp(14), dp(9));
             card.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
 
             LinearLayout row = new LinearLayout(mAct);
@@ -267,7 +294,7 @@ public final class SnippetManager {
             cmd.setTextSize(13);
             cmd.setTypeface(Typeface.DEFAULT);
             cmd.setSingleLine(true);
-            cmd.setEllipsize(TextUtils.TruncateAt.END);
+            cmd.setEllipsize(android.text.TextUtils.TruncateAt.END);
             cmd.setHorizontallyScrolling(true);
             cmd.setMaxWidth(Integer.MAX_VALUE);
             cmd.setPadding(0, 0, dp(8), 0);
@@ -501,6 +528,7 @@ public final class SnippetManager {
         return new File(dir, FILE);
     }
 
+    /** ★ 已修正 try/catch 结构（原写法 `} } catch (e) { }` 导致 3 处编译错误） */
     private void migrateLegacy() {
         List<File> legacy = new ArrayList<>();
         String envHome = System.getenv("HOME");
@@ -520,8 +548,9 @@ public final class SnippetManager {
             for (File lf : legacy) {
                 if (!lf.exists()) continue;
                 try {
-                    String s = new String(Files.readAllBytes(lf.toPath()), java.nio.charset.StandardCharsets.UTF_8);
-                    if (s == null || s.trim().isEmpty()) continue;
+                    String s = new String(Files.readAllBytes(lf.toPath()),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    if (s == null || s.trim().isEmpty()) continue;   // 见下方修正
                     JSONArray arr = new JSONArray(s);
                     for (int i = 0; i < arr.length(); i++) {
                         JSONObject o = arr.optJSONObject(i);
@@ -542,9 +571,14 @@ public final class SnippetManager {
                 JSONArray arr = new JSONArray();
                 for (String c : cmds.values()) arr.put(c);
                 File tmp = new File(target.getPath() + ".tmp");
-                try (FileWriter w = new FileWriter(tmp)) { w.write(arr.toString(2)); w.flush(); }
+                try (FileWriter w = new FileWriter(tmp)) {
+                    w.write(arr.toString(2));
+                    w.flush();
+                }
                 if (tmp.renameTo(target)) {
-                    for (File lf : legacy) { try { lf.delete(); } catch (Exception ignore) {} }
+                    for (File lf : legacy) {
+                        try { lf.delete(); } catch (Exception ignore) { }
+                    }
                     Logger.logVerbose(TAG, "legacy migrated → " + target.getPath());
                 }
             }
@@ -568,7 +602,7 @@ public final class SnippetManager {
         GradientDrawable d = new GradientDrawable();
         d.setShape(GradientDrawable.RECTANGLE);
         d.setCornerRadius(dp(8));
-        d.setColor(bg());
+        d.setColor(surface());
         d.setStroke(dp(focused ? 2 : 1), focused ? accent() : stroke());
         return d;
     }

@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.PorterDuff;
 import android.net.Uri;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -33,6 +34,8 @@ import java.io.InputStream;
 
 /**
  * ★ 左抽屉面板（Tab 化 + 界面主题管理器 + 收藏夹 + 更多菜单）
+ *
+ * 配色约定同 SessionTabBar：背景用 current()，前景用 ThemeManager.foregroundTheme()。
  */
 public final class DrawerPanel {
 
@@ -52,6 +55,9 @@ public final class DrawerPanel {
     private SnippetManager mSnippet;
     private boolean mSnippetTabActive = false;
 
+    private String mCurrentTabKey = null;
+    private Runnable mOnTabChanged;
+
     public DrawerPanel(@NonNull TermuxActivity activity) {
         mActivity = activity;
 
@@ -64,7 +70,6 @@ public final class DrawerPanel {
         registerPickImage();
         applyWallpaper();
 
-        setupHeader();
         buildTabs();
         setupVersion();
 
@@ -78,14 +83,37 @@ public final class DrawerPanel {
         return mRoot;
     }
 
+    /* ================= 供 TermuxActivity 查询 / 监听 Tab ================= */
+
+    public void setOnTabChanged(Runnable r) {
+        mOnTabChanged = r;
+    }
+
+    public boolean isCurrentTab(String tabKey) {
+        return tabKey != null && tabKey.equals(mCurrentTabKey);
+    }
+
+    public String getCurrentTabKey() {
+        return mCurrentTabKey;
+    }
+
+    private void notifyTabChanged(String key) {
+        mCurrentTabKey = key;
+        if (mOnTabChanged != null) {
+            mOnTabChanged.run();
+        }
+    }
+
     /* ================= 配色 / 壁纸 ================= */
 
     private void applyColors() {
         ThemeSpec t = ThemeManager.current(mActivity);
-        mColorBg = t.bgColor;
-        mColorTextPrimary = t.textPrimary;
-        mColorTextSecondary = t.textSecondary;
-        mColorAccent = t.accent;
+        // ★ 前景色走底衬预设，绕开 wallpaper() 强制白字
+        ThemeSpec base = ThemeManager.foregroundTheme(mActivity);
+        mColorBg = t.bgColor;                       // 背景仍用当前主题
+        mColorTextPrimary = base.textPrimary;
+        mColorTextSecondary = base.textSecondary;
+        mColorAccent = base.accent;
     }
 
     private void applyWallpaper() {
@@ -95,6 +123,12 @@ public final class DrawerPanel {
                 Drawable d = Drawable.createFromPath(t.wallpaperPath);
                 if (d != null) {
                     mRoot.setBackground(d);
+                    // ★ 浅底衬（配深字）时把壁纸压暗，避免暖白区白上白
+                    if (!t.useLightTextOnWallpaper()) {
+                        mRoot.getBackground().setColorFilter(0x73FFFFFF, PorterDuff.Mode.MULTIPLY);
+                    } else {
+                        mRoot.getBackground().clearColorFilter();
+                    }
                     return;
                 }
             } catch (Exception ignored) {
@@ -107,7 +141,6 @@ public final class DrawerPanel {
     public void reloadTheme() {
         applyColors();
         applyWallpaper();
-        setupHeader();
         setupVersion();
         buildTabs();
         if (mTabContainer.getChildCount() > 0) {
@@ -168,14 +201,6 @@ public final class DrawerPanel {
 
     /* ================= 装配 ================= */
 
-    private void setupHeader() {
-        TextView title = mRoot.findViewById(R.id.drawer_title);
-        if (title != null) {
-            title.setText("Termux");
-            title.setTextColor(mColorTextPrimary);
-        }
-    }
-
     private void setupVersion() {
         TextView version = mRoot.findViewById(R.id.drawer_version);
         if (version == null) return;
@@ -191,12 +216,11 @@ public final class DrawerPanel {
 
     private void buildTabs() {
         mTabContainer.removeAllViews();
-        addTab("帮助", "help", this::buildHelpPage);
-        addTab("设置", "settings", this::buildSettingsPage);
-        addTab("终端样式", "styling", this::buildStylingPage);
-        addTab("收藏夹", "snippet", this::buildSnippetPage);
-        addTab("更多", "more", this::buildMorePage);
+        mSelectedTab = null;
+        mCurrentTabKey = null;
         addTab("主题", "theme", this::buildThemePage);
+        addTab("设置", "more", this::buildMorePage);
+        addTab("收藏夹", "snippet", this::buildSnippetPage);
         addTab("关于", "about", this::buildAboutPage);
     }
 
@@ -210,23 +234,24 @@ public final class DrawerPanel {
         tab.setTextColor(mColorTextSecondary);
         tab.setBackgroundResource(getSelectableItemBackground());
         tab.setIncludeFontPadding(false);
-        tab.setTag(key);                                     // ★ 打 key，供 openTab 查找
+        tab.setTag(key);
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.setMarginStart(dp(4));
         params.setMarginEnd(dp(4));
 
+        final String tabKey = key;
         tab.setOnClickListener(v -> {
-            mSnippetTabActive = "snippet".equals(key);
+            mSnippetTabActive = "snippet".equals(tabKey);
             selectTab(tab);
             pageBuilder.run();
+            notifyTabChanged(tabKey);
         });
         tab.setLayoutParams(params);
         mTabContainer.addView(tab, params);
     }
 
-    /** ★ 供 Session 栏 ☆ / ≡：切到指定 Tab（"snippet" / "more" 等），找不到则回退第一个 */
     public void openTab(@NonNull String key) {
         for (int i = 0; i < mTabContainer.getChildCount(); i++) {
             View tab = mTabContainer.getChildAt(i);
@@ -264,51 +289,17 @@ public final class DrawerPanel {
 
     /* ================= 页面 ================= */
 
-    private void buildHelpPage() {
-        LinearLayout page = newPage();
-        page.addView(makeText("帮助", 16, true));
-        page.addView(makeText(
-                "常用操作\n· 长按终端：复制、粘贴、更多\n· 音量减 + 字母键：Ctrl 组合键", 13, false));
-        page.addView(makeButton("打开帮助", v -> {
-            closeDrawer();
-            mActivity.startActivity(new Intent(mActivity, HelpActivity.class));
-        }));
-        showPage(page);
-    }
-
-    private void buildSettingsPage() {
-        LinearLayout page = newPage();
-        page.addView(makeText("设置", 16, true));
-        page.addView(makeText("调整终端字体、快捷键和行为。", 13, false));
-        page.addView(makeButton("打开设置", v -> {
-            closeDrawer();
-            mActivity.startActivity(new Intent(mActivity, SettingsActivity.class));
-        }));
-        showPage(page);
-    }
-
-    private void buildStylingPage() {
-        LinearLayout page = newPage();
-        page.addView(makeText("终端样式", 16, true));
-        page.addView(makeText("调整终端字体、配色和光标样式。", 13, false));
-        page.addView(makeButton("打开 Termux:Styling", v -> openStyling()));
-        showPage(page);
-    }
-
-    /** ★ 长按菜单搬进抽屉：复用 TerminalContextMenu.dispatchById */
     private void buildMorePage() {
         LinearLayout page = newPage();
-        page.addView(makeText("更多", 16, true));
-
         boolean has = mActivity.hasCurrentSession();
 
         page.addView(makeButton("选择 URL", v -> act(TerminalContextMenu.ID_SELECT_URL)));
         page.addView(makeButton("分享转写", v -> act(TerminalContextMenu.ID_SHARE_TRANSCRIPT)));
         page.addView(makeButton("重置终端", v -> act(TerminalContextMenu.ID_RESET)));
         page.addView(makeButton("杀掉进程", v -> act(TerminalContextMenu.ID_KILL)));
-        page.addView(makeButton("快捷键栏（ESC/CTRL/ALT）",
+        page.addView(makeButton("快捷键栏",
                 v -> act(TerminalContextMenu.ID_TOGGLE_EXTRA_KEYS)));
-        page.addView(makeButton("Session 栏（会话标签）",
+        page.addView(makeButton("Session栏",
                 v -> act(TerminalContextMenu.ID_TOGGLE_TAB_BAR)));
         page.addView(makeButton("终端样式", v -> act(TerminalContextMenu.ID_STYLING)));
         page.addView(makeButton("保持亮屏", v -> act(TerminalContextMenu.ID_KEEP_SCREEN)));
@@ -333,8 +324,6 @@ public final class DrawerPanel {
 
     private void buildThemePage() {
         LinearLayout page = newPage();
-        page.addView(makeText("主题", 16, true));
-        page.addView(makeText("选择界面主题，或设置自定义背景图。", 13, false));
 
         LinearLayout options = new LinearLayout(mActivity);
         options.setOrientation(LinearLayout.VERTICAL);

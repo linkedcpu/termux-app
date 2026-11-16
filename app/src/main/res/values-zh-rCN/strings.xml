@@ -128,4 +128,12 @@
     <string name="title_share_selected_text_with">发送选中文本到：</string>
     <string name="title_share_transcript">终端会话记录</string>
     <string name="title_share_transcript_with">发送会话记录到：</string>
+        <!-- 底部 SessionTabBar 操作按钮的无障碍描述 -->
+
+    <string name="action_snippets">收藏命令</string>
+    <string name="action_open_drawer">打开菜单</string>
+
+    <!-- 左抽屉版本号占位（可选，若代码里用 getString 拼接则保留） -->
+    <string name="drawer_version_format">Termux · v%s</string>
+
 </resources>

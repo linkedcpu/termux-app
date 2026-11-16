@@ -57,7 +57,7 @@ public final class ThemeSpec {
         }
     }
 
-    /** 壁纸主题：以某预设为底色，文字强制白色以叠加在图片上 */
+    /** 壁纸主题：以某预设为底色，文字默认白色以叠加在图片上 */
     public static ThemeSpec wallpaper(ThemeSpec base, String path) {
         return new ThemeSpec("自定义壁纸", base.bgColor, 0xffffffff, 0xccffffff, base.accent, path);
     }
@@ -65,5 +65,26 @@ public final class ThemeSpec {
     /** 是否半透明（背景 alpha 小于不透明） */
     public boolean isTranslucent() {
         return Color.alpha(bgColor) < 0xff;
+    }
+
+    /**
+     * 壁纸模式下 UI 层是否应使用浅色文字。
+     * 依据底衬预设的背景亮度判定，避免浅色预设叠加壁纸时仍套白字导致不可读。
+     * 半透明背景先垫到不透明暗底上再计算亮度。
+     */
+    public boolean useLightTextOnWallpaper() {
+        int c = bgColor;
+        int a = Color.alpha(c);
+        int r = Color.red(c);
+        int g = Color.green(c);
+        int b = Color.blue(c);
+        if (a != 0xff) {
+            float k = a / 2f / 127.5f;
+            r = (int) (r * k + 0x14 * (1 - k));
+            g = (int) (g * k + 0x14 * (1 - k));
+            b = (int) (b * k + 0x14 * (1 - k));
+        }
+        float lum = 0.299f * r + 0.587f * g + 0.114f * b;
+        return lum < 0x60;
     }
 }
