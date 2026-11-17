@@ -65,12 +65,12 @@ public final class ThemeStore {
         return wp != null && !wp.isEmpty();
     }
 
-    public static boolean isSelected(Context c, int index) {
+        public static boolean isSelected(Context c, int index) {
         SharedPreferences sp = prefs(c);
-        String wp = sp.getString(KEY_WALLPAPER, null);
-        return (wp == null || wp.isEmpty())
-                && ThemePreset.get(index).name.equals(sp.getString(KEY_NAME, ThemePreset.ALL[0].name));
+        return ThemePreset.get(index).name.equals(
+                sp.getString(KEY_NAME, ThemePreset.ALL[0].name));
     }
+
 
     public static void invalidate() { sCache = null; }
 

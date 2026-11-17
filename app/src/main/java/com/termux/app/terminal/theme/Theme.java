@@ -14,6 +14,9 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
 
+import androidx.core.graphics.drawable.RoundedBitmapDrawable;
+import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory;
+
 import java.util.ArrayList;
 
 /**
@@ -43,7 +46,7 @@ public final class Theme {
     /** 圆角层级基准由控件给，皮肤只给倍率 */
     public static final float RADIUS_NONE = 0f, RADIUS_SMALL = 6f, RADIUS_MEDIUM = 12f, RADIUS_LARGE = 20f;
 
-    /** ★ 修复：材质格子基准尺寸(dp)，皮肤可用 ThemeShape.textureTileDp 覆盖 */
+    /** ★ 材质格子基准尺寸(dp)，皮肤可用 ThemeShape.textureTileDp 覆盖 */
     private static final float TEXTURE_TILE_DP = 24f;
 
     /* ================= 字段 ================= */
@@ -155,31 +158,29 @@ public final class Theme {
     /**
      * ★ 根背景：
      *   壁纸态 → [毛玻璃]壁纸 → SCRIM → 描边层
-     *   纯色态 → 不透明面板 → 材质 → 描边层   ← 材质必须在面板之上，否则被完全遮住
+     *   纯色态 → 不透明面板 → 材质 → 描边层
      */
     public Drawable panel(Context ctx, float radiusBaseDp) {
         if (wallpaperBitmap != null) {
             ArrayList<Drawable> layers = new ArrayList<>();
             if (blurEnabled()) {
-                layers.add(blurredWallpaper(ctx, 1.0f, 4));
+                layers.add(roundedWallpaper(ctx, blurredBmp(ctx, 1.0f, 4), radiusBaseDp));
             } else {
-                BitmapDrawable wd = new BitmapDrawable(ctx.getResources(), wallpaperBitmap);
-                wd.setTileModeXY(Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-                layers.add(wd);
+                layers.add(roundedWallpaper(ctx, wallpaperBitmap, radiusBaseDp));
             }
-            layers.add(new ColorDrawable(scrim));
+            layers.add(scrimDrawable(ctx, radiusBaseDp));
             layers.add(outlineOnly(ctx, radiusBaseDp));
             return new LayerDrawable(layers.toArray(new Drawable[0]));
         }
         ArrayList<Drawable> layers = new ArrayList<>();
-        layers.add(solidSurface(ctx, radiusBaseDp));          // 底：不透明面板
-        Bitmap tile = textureTile(ctx);                       // ★ 修复
-        if (tile != null) layers.add(tileDrawable(ctx, tile)); // ★ 修复：材质压在面板上
-        layers.add(outlineOnly(ctx, radiusBaseDp));           // 顶：描边
+        layers.add(solidSurface(ctx, radiusBaseDp));
+        Bitmap tile = textureTile(ctx);
+        if (tile != null) layers.add(tileDrawable(ctx, tile));
+        layers.add(outlineOnly(ctx, radiusBaseDp));
         return new LayerDrawable(layers.toArray(new Drawable[0]));
     }
 
-    /** ★ 页面/卡片表面：壁纸态半透明 + 轻模糊，纯色态不透明面板 + 材质 */
+    /** ★ 页面/卡片表面：壁纸态半透明面板 + 轻模糊，纯色态不透明面板 + 材质 */
     public Drawable surface(Context ctx, float radiusBaseDp) {
         if (wallpaperBitmap != null) {
             GradientDrawable g = new GradientDrawable();
@@ -190,11 +191,11 @@ public final class Theme {
             if (sw > 0) g.setStroke(sw, color(OUTLINE));
             if (blurEnabled()) {
                 return new LayerDrawable(new Drawable[]{
-                        blurredWallpaper(ctx, 0.5f, 6), g});
+                        roundedWallpaper(ctx, blurredBmp(ctx, 0.5f, 6), radiusBaseDp), g});
             }
             return g;
         }
-        ArrayList<Drawable> layers = new ArrayList<>();       // ★ 修复
+        ArrayList<Drawable> layers = new ArrayList<>();
         layers.add(solidSurface(ctx, radiusBaseDp));
         Bitmap tile = textureTile(ctx);
         if (tile != null) layers.add(tileDrawable(ctx, tile));
@@ -211,7 +212,6 @@ public final class Theme {
         } else {
             g.setColor(color(SURFACE, STATE_PRESSED));
         }
-        // ★ 修复：纯色态也尊重 pillButtons()，原先只在壁纸态生效
         if (pillButtons()) {
             g.setCornerRadius(100f * density(ctx));
         } else {
@@ -219,12 +219,12 @@ public final class Theme {
         }
         int sw = stroke(ctx);
         if (sw > 0) g.setStroke(sw, color(OUTLINE));
-        Bitmap tile = textureTile(ctx);                       // ★ 修复：按钮也铺材质
+        Bitmap tile = textureTile(ctx);
         if (tile == null) return g;
         return new LayerDrawable(new Drawable[]{g, tileDrawable(ctx, tile)});
     }
 
-    /** ★ 修复：材质小图必须平铺，否则被拉伸成糊图 */
+    /** ★ 材质小图必须平铺，否则被拉伸成糊图 */
     private static BitmapDrawable tileDrawable(Context ctx, Bitmap tile) {
         BitmapDrawable td = new BitmapDrawable(ctx.getResources(), tile);
         td.setTileModeXY(Shader.TileMode.REPEAT, Shader.TileMode.REPEAT);
@@ -263,7 +263,8 @@ public final class Theme {
      *   scale 控制模糊强度倍率（根背景 1.0，页面 0.5），
      *   div 控制降采样分母（越大越快越糊）。
      */
-    private Drawable blurredWallpaper(Context ctx, float scale, int div) {
+    /** ★ 只产出模糊 Bitmap，不包装；圆角交给 roundedWallpaper */
+    private Bitmap blurredBmp(Context ctx, float scale, int div) {
         Bitmap src = wallpaperBitmap;
         int radius = Math.round(shape.blurRadiusDp * scale * density(ctx));
         if (radius < 1) radius = 1;
@@ -277,9 +278,30 @@ public final class Theme {
         p.setMaskFilter(new BlurMaskFilter(radius, BlurMaskFilter.Blur.NORMAL));
         c.drawBitmap(small, 0, 0, p);
         small.recycle();
-        BitmapDrawable d = new BitmapDrawable(ctx.getResources(), out);
-        d.setTileModeXY(Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-        return d;
+        return out;
+    }
+
+    /** ★ 壁纸层按主题圆角裁剪，否则直角壁纸从圆角描边外侧漏出 */
+        /** ★ 壁纸层按主题圆角裁剪，否则直角壁纸从圆角描边外侧漏出 */
+        /** ★ 壁纸层按主题圆角裁剪，否则直角壁纸从圆角描边外侧漏出 */
+    private Drawable roundedWallpaper(Context ctx, Bitmap bmp, float radiusBaseDp) {
+        RoundedBitmapDrawable rd = RoundedBitmapDrawableFactory.create(ctx.getResources(), bmp);
+        rd.setCornerRadius(radius(ctx, radiusBaseDp));
+        rd.setAntiAlias(true);
+        rd.setFilterBitmap(true);
+        rd.setGravity(android.view.Gravity.FILL);   // 或 Gravity.CENTER 做居中裁剪
+        return rd;
+    }
+
+
+
+    /** ★ SCRIM 跟着圆角走，否则蒙层同样漏角 */
+    private Drawable scrimDrawable(Context ctx, float radiusBaseDp) {
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.RECTANGLE);
+        g.setColor(scrim);
+        g.setCornerRadius(radius(ctx, radiusBaseDp));
+        return g;
     }
 
     /* ================= 材质 / 动效 ================= */
