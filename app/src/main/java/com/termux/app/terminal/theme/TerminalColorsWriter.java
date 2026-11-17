@@ -1,6 +1,10 @@
 package com.termux.app.terminal.theme;
 
 import android.content.Context;
+import android.content.Intent;
+
+import com.termux.shared.logger.Logger;
+import com.termux.shared.termux.TermuxConstants;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -9,9 +13,14 @@ import java.io.IOException;
 /**
  * 终端配色联动：界面主题 → ~/.termux/colors.properties。
  * 单向：不反向读取终端配色，避免 16 色映射丢失。
+ *
+ * ★ 写入路径必须是 $HOME/.termux/colors.properties
+ *   （= /data/data/com.termux/files/home/.termux/colors.properties）
+ * ★ 写完后必须广播 ACTION_RELOAD_STYLE，否则已开会话不刷新
  */
 public final class TerminalColorsWriter {
 
+    private static final String TAG = "TerminalColorsWriter";
     private static final String DIR = ".termux";
     private static final String FILE = "colors.properties";
 
@@ -20,21 +29,80 @@ public final class TerminalColorsWriter {
     /**
      * 内置方案：dark / light / warm / ink-blue。
      * 也可把 name 换成你自己的 .termux/colors/ 文件名。
+     *
+     * @return 是否实际写入并触发了重载
      */
-    public static void apply(Context ctx, ThemePreset preset) {
-        if (preset == null || preset.terminalScheme == null) return;
-        String body = scheme(preset.terminalScheme);
-        if (body == null) return;
+    public static boolean apply(Context ctx, ThemePreset preset) {
+        if (ctx == null || preset == null) return false;
+
+        String name = preset.terminalScheme;
+        if (name == null || name.trim().isEmpty()) {
+            Logger.logVerbose(TAG, "terminalScheme 未设置，跳过终端配色联动");
+            return false;
+        }
+
+        String body = scheme(name.trim());
+        if (body == null) {
+            Logger.logWarn(TAG, "未知终端配色方案: " + name);
+            return false;
+        }
+
+        File dir = homeDir();
+        if (dir == null) return false;
+
         try {
-            File dir = new File(ctx.getFilesDir().getParentFile(), DIR);
             //noinspection ResultOfMethodCallIgnored
             dir.mkdirs();
             File out = new File(dir, FILE);
-            FileOutputStream fos = new FileOutputStream(out, false);
-            fos.write(body.getBytes("UTF-8"));
-            fos.close();
-        } catch (IOException ignored) {
-            // 写失败不影响界面主题
+            File tmp = new File(dir, FILE + ".tmp");
+
+            FileOutputStream fos = new FileOutputStream(tmp, false);
+            try {
+                fos.write(body.getBytes("UTF-8"));
+                fos.flush();
+            } finally {
+                fos.close();
+            }
+
+            if (!tmp.renameTo(out)) {
+                // 跨文件系统时 rename 会失败，退回直接写
+                FileOutputStream fos2 = new FileOutputStream(out, false);
+                try {
+                    fos2.write(body.getBytes("UTF-8"));
+                    fos2.flush();
+                } finally {
+                    fos2.close();
+                }
+            }
+
+            Logger.logInfoAndShowToast(ctx, TAG, "终端配色已同步：" + name);
+            reloadTerminalStyle(ctx);
+            return true;
+        } catch (IOException e) {
+            Logger.logStackTraceWithMessage(TAG, "写入 colors.properties 失败", e);
+            return false;
+        }
+    }
+
+    /** ★ $HOME/.termux —— Termux 真正读取的目录 */
+    private static File homeDir() {
+        String home = System.getenv("HOME");
+        if (home == null || home.isEmpty()) {
+            home = "/data/data/com.termux/files/home";
+        }
+        return new File(home, DIR);
+    }
+
+    /** ★ 让已开会话重读配色，否则只有新会话才变 */
+    private static void reloadTerminalStyle(Context ctx) {
+        try {
+            Intent i = new Intent(TermuxConstants.TERMUX_APP.TERMUX_ACTIVITY
+                    .ACTION_RELOAD_STYLE);
+            i.putExtra(TermuxConstants.TERMUX_APP.TERMUX_ACTIVITY
+                    .EXTRA_RECREATE_ACTIVITY, false);
+            ctx.sendBroadcast(i);
+        } catch (Throwable t) {
+            Logger.logVerbose(TAG, "reload broadcast skipped: " + t.getMessage());
         }
     }
 
