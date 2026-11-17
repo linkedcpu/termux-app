@@ -19,15 +19,24 @@ public final class ThemeShape {
     /** ★ 毛玻璃模糊半径(dp)；0 = 关闭 */
     public final float blurRadiusDp;
 
-    public ThemeShape(float radiusScale, float strokeDp, boolean pillButtons, float blurRadiusDp) {
+    /** ★ 材质格子尺寸(dp)；0 = 用 Theme 内置默认 */
+    public final float textureTileDp;
+
+    public ThemeShape(float radiusScale, float strokeDp, boolean pillButtons,
+                      float blurRadiusDp, float textureTileDp) {
         this.radiusScale = Math.max(0f, radiusScale);
         this.strokeDp = Math.max(0f, strokeDp);
         this.pillButtons = pillButtons;
         this.blurRadiusDp = Math.max(0f, blurRadiusDp);
+        this.textureTileDp = Math.max(0f, textureTileDp);
+    }
+
+    public ThemeShape(float radiusScale, float strokeDp, boolean pillButtons, float blurRadiusDp) {
+        this(radiusScale, strokeDp, pillButtons, blurRadiusDp, 0f);
     }
 
     public ThemeShape(float radiusScale, float strokeDp, boolean pillButtons) {
-        this(radiusScale, strokeDp, pillButtons, 0f);
+        this(radiusScale, strokeDp, pillButtons, 0f, 0f);
     }
 
     /* ================= 内置档位 ================= */

@@ -89,6 +89,84 @@ public final class ThemePreset {
                 ThemeShape.flat(),
                 ThemeTexture.grid(0.08f),
                 ThemeMotion.standard()),
+        /* ============ 主题模块验证组（index 11~17，只追加不插队） ============ */
+
+        // V1 颜色角色：纯色无材质无描边，专看 BG/SURFACE/ACCENT/ON_ACCENT/TEXT 三档
+        new ThemePreset(
+                "V1 颜色角色",
+                0xfff2e8d0,
+                0xffd0202a,
+                0xe6,
+                "light",
+                ThemeShape.flat(),
+                ThemeTexture.none(),
+                ThemeMotion.standard()),
+
+        // V2 形状-圆角：radiusScale 1.8 放大圆角，直角控件也应明显变圆
+        new ThemePreset(
+                "V2 圆角",
+                0xfff4f5f7,
+                0xff3d6fb4,
+                0xe6,
+                "light",
+                new ThemeShape(1.8f, 0f, false, 0f, 0f),
+                ThemeTexture.none(),
+                ThemeMotion.standard()),
+
+        // V3 形状-描边：4dp 粗描边，验证 stroke() 与 density 换算
+        new ThemePreset(
+                "V3 描边",
+                0xfff4f5f7,
+                0xff3d6fb4,
+                0xe6,
+                "light",
+                new ThemeShape(0.3f, 4f, false, 0f, 0f),
+                ThemeTexture.none(),
+                ThemeMotion.standard()),
+
+        // V4 形状-胶囊：pillButtons 纯色态，验证上一轮修复是否生效
+        new ThemePreset(
+                "V4 胶囊按钮",
+                0xfff6eff3,
+                0xffbf8fa3,
+                0xe6,
+                "light",
+                ThemeShape.pill(),
+                ThemeTexture.none(),
+                ThemeMotion.standard()),
+
+        // V5 材质：大格子 + 浓点阵，验证 textureTile 尺寸与平铺
+        new ThemePreset(
+                "V5 材质点阵",
+                0xfff2e8d0,
+                0xffd0202a,
+                0xe6,
+                "light",
+                new ThemeShape(1.0f, 1f, false, 0f, 32f),
+                ThemeTexture.dot(0.28f),
+                ThemeMotion.standard()),
+
+        // V6 材质-网格：验证第二种纹路 + 斜纹叠加不崩
+        new ThemePreset(
+                "V6 材质网格",
+                0xfff4f5f7,
+                0xff3d6fb4,
+                0xe6,
+                "light",
+                new ThemeShape(0.5f, 1f, false, 0f, 24f),
+                ThemeTexture.grid(0.22f),
+                ThemeMotion.standard()),
+
+        // V7 动效-干脆：0ms 无缩放无波纹，按下应与 V5 形成明显手感差
+        new ThemePreset(
+                "V7 动效干脆",
+                0xfff2e8d0,
+                0xffd0202a,
+                0xe6,
+                "light",
+                ThemeShape.manga(),
+                ThemeTexture.dot(0.28f),
+                ThemeMotion.snappy()),
     };
 
     public static ThemePreset get(int index) {

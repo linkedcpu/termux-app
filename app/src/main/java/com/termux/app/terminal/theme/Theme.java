@@ -20,7 +20,7 @@ import java.util.ArrayList;
  * 已解析主题：不可变快照。控件只调语义入口，不做任何推导：
  *   color(角色) / panel() / surface() / button() / radius() / stroke() / pillButtons()
  *
- * ★ 全项目唯一的推导、壁纸分支、毛玻璃实现都在这里。控件不判壁纸、不判亮度、不混色。
+ * ★ 全项目唯一的推导、壁纸态分支、毛玻璃实现都在这里。控件不判壁纸、不判亮度、不混色。
  */
 public final class Theme {
 
@@ -42,6 +42,9 @@ public final class Theme {
 
     /** 圆角层级基准由控件给，皮肤只给倍率 */
     public static final float RADIUS_NONE = 0f, RADIUS_SMALL = 6f, RADIUS_MEDIUM = 12f, RADIUS_LARGE = 20f;
+
+    /** ★ 修复：材质格子基准尺寸(dp)，皮肤可用 ThemeShape.textureTileDp 覆盖 */
+    private static final float TEXTURE_TILE_DP = 24f;
 
     /* ================= 字段 ================= */
 
@@ -75,7 +78,7 @@ public final class Theme {
         int s = this.preset.scrim;
         this.scrim = s == 0 ? (isDark(this.bg) ? 0x59000000 : 0xe6000000) : (s | 0xff000000);
 
-        // ★ 唯一的壁纸分支：亮度与 SCRIM 按壁纸「左上 1/4」判定
+        // ★ 唯一的壁纸态分支：亮度与 SCRIM 按壁纸「左上 1/4」判定
         boolean hasWp = wallpaper != null && !wallpaper.isEmpty();
         if (hasWp) {
             Bitmap wp = decodeScaled(wallpaper, 1080, 1920);
@@ -152,7 +155,7 @@ public final class Theme {
     /**
      * ★ 根背景：
      *   壁纸态 → [毛玻璃]壁纸 → SCRIM → 描边层
-     *   纯色态 → 材质 → 描边层 → 不透明面板
+     *   纯色态 → 不透明面板 → 材质 → 描边层   ← 材质必须在面板之上，否则被完全遮住
      */
     public Drawable panel(Context ctx, float radiusBaseDp) {
         if (wallpaperBitmap != null) {
@@ -169,14 +172,14 @@ public final class Theme {
             return new LayerDrawable(layers.toArray(new Drawable[0]));
         }
         ArrayList<Drawable> layers = new ArrayList<>();
-        Bitmap tile = textureTile(ctx);
-        if (tile != null) layers.add(new BitmapDrawable(ctx.getResources(), tile));
-        layers.add(outlineOnly(ctx, radiusBaseDp));
-        layers.add(solidSurface(ctx, radiusBaseDp));
+        layers.add(solidSurface(ctx, radiusBaseDp));          // 底：不透明面板
+        Bitmap tile = textureTile(ctx);                       // ★ 修复
+        if (tile != null) layers.add(tileDrawable(ctx, tile)); // ★ 修复：材质压在面板上
+        layers.add(outlineOnly(ctx, radiusBaseDp));           // 顶：描边
         return new LayerDrawable(layers.toArray(new Drawable[0]));
     }
 
-    /** ★ 页面/卡片表面：壁纸态半透明 + 轻模糊，纯色态不透明 */
+    /** ★ 页面/卡片表面：壁纸态半透明 + 轻模糊，纯色态不透明面板 + 材质 */
     public Drawable surface(Context ctx, float radiusBaseDp) {
         if (wallpaperBitmap != null) {
             GradientDrawable g = new GradientDrawable();
@@ -191,7 +194,12 @@ public final class Theme {
             }
             return g;
         }
-        return solidSurface(ctx, radiusBaseDp);
+        ArrayList<Drawable> layers = new ArrayList<>();       // ★ 修复
+        layers.add(solidSurface(ctx, radiusBaseDp));
+        Bitmap tile = textureTile(ctx);
+        if (tile != null) layers.add(tileDrawable(ctx, tile));
+        if (stroke(ctx) > 0) layers.add(outlineOnly(ctx, radiusBaseDp));
+        return new LayerDrawable(layers.toArray(new Drawable[0]));
     }
 
     /** ★ 按钮背景：形态与透明度由皮肤决定 */
@@ -203,6 +211,7 @@ public final class Theme {
         } else {
             g.setColor(color(SURFACE, STATE_PRESSED));
         }
+        // ★ 修复：纯色态也尊重 pillButtons()，原先只在壁纸态生效
         if (pillButtons()) {
             g.setCornerRadius(100f * density(ctx));
         } else {
@@ -210,7 +219,16 @@ public final class Theme {
         }
         int sw = stroke(ctx);
         if (sw > 0) g.setStroke(sw, color(OUTLINE));
-        return g;
+        Bitmap tile = textureTile(ctx);                       // ★ 修复：按钮也铺材质
+        if (tile == null) return g;
+        return new LayerDrawable(new Drawable[]{g, tileDrawable(ctx, tile)});
+    }
+
+    /** ★ 修复：材质小图必须平铺，否则被拉伸成糊图 */
+    private static BitmapDrawable tileDrawable(Context ctx, Bitmap tile) {
+        BitmapDrawable td = new BitmapDrawable(ctx.getResources(), tile);
+        td.setTileModeXY(Shader.TileMode.REPEAT, Shader.TileMode.REPEAT);
+        return td;
     }
 
     private Drawable solidSurface(Context ctx, float radiusBaseDp) {
@@ -272,9 +290,15 @@ public final class Theme {
         return texture == null ? 0 : alpha(text, dark ? 0x14 : 0x10);
     }
 
+    /** ★ 修复：原先误把 bg 颜色当尺寸传给 tile()，导致材质永远不显示 */
     public Bitmap textureTile(Context ctx) {
         if (texture == null || ctx == null) return null;
-        return texture.tile(textureFg(), bg);
+        if (texture.kind() == ThemeTexture.NONE) return null;
+        float dp = shape.textureTileDp > 0f ? shape.textureTileDp : TEXTURE_TILE_DP;
+        int px = Math.round(dp * density(ctx));
+        if (px < 8) px = 8;
+        if (px > 4096) px = 4096;
+        return texture.tile(textureFg(), px);
     }
 
     public ThemeMotion motion() { return motion; }
@@ -373,17 +397,6 @@ public final class Theme {
 
     private static float lum(int r, int g, int b) {
         return 0.299f * r + 0.587f * g + 0.114f * b;
-    }
-
-    private static int over(int bg, int fg) {
-        int a = Color.alpha(fg);
-        if (a == 0xff) return fg;
-        if (a == 0) return bg;
-        float k = a / 255f;
-        return 0xff000000
-                | ((int) (Color.red(fg) * k + Color.red(bg) * (1 - k))) << 16
-                | ((int) (Color.green(fg) * k + Color.green(bg) * (1 - k))) << 8
-                | (int) (Color.blue(fg) * k + Color.blue(bg) * (1 - k));
     }
 
     private static int mix(int a, int b, float k) {
