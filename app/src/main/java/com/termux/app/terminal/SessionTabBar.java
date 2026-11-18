@@ -1,8 +1,6 @@
 package com.termux.app.terminal;
 
 import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.Drawable;
-import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -19,20 +17,13 @@ import com.termux.R;
 import com.termux.app.TermuxActivity;
 import com.termux.app.terminal.theme.Theme;
 import com.termux.app.terminal.theme.ThemeStore;
+import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 
 import java.util.List;
 
-/**
- * ★ 底部 Session 标签栏 + 标签抽屉（PopupWindow）
- *
- * ★ 外观口径与 DrawerPanel / SnippetManager 完全一致：只调 Theme 语义入口，
- *   不判壁纸、不判亮度、不混色、不写死色值与圆角。
- *     颜色 → theme().color(角色)
- *     形状 → theme().surface() / button() / radius() / stroke() / pillButtons()
- */
 public final class SessionTabBar {
 
     private static final int DRAWER_GAP_DP = 6;
@@ -40,56 +31,62 @@ public final class SessionTabBar {
     private static final float RADIUS_POPUP_DP = 12f;
     static final int TAG_WIDTH_PX = 288;
 
+    private static final String LOG_TAG = "SessionTabBar";
+
+    /** ★ 抽屉 Tab 常量，与 TermuxActivity 对齐 */
+    public static final String TAB_SNIPPET = "snippet";
+    public static final String TAB_MORE = "more";
+
     private final TermuxActivity mActivity;
     private final TerminalView mTerminalView;
     private final View mRoot;
     private final LinearLayout mContainer;
-    private final TextView mAddButton;
+    private final LinearLayout mActionGroup;
 
     private boolean mVisible = true;
     private int mOriginalHeight = 0;
     private PopupWindow mPopup;
 
+    private ImageView mBtnAdd;
+    private ImageView mBtnSnippet;
+    private ImageView mBtnMenu;
+
     public SessionTabBar(TermuxActivity activity,
                          TerminalView terminalView,
                          View root,
                          LinearLayout container,
-                         TextView addButton) {
+                         LinearLayout actionGroup) {
         mActivity = activity;
         mTerminalView = terminalView;
         mRoot = root;
         mContainer = container;
-        mAddButton = addButton;
+        mActionGroup = actionGroup;
     }
 
     /* ================= 公开 API ================= */
 
     public void init() {
         mRoot.post(this::captureOriginalHeight);
-
-        mAddButton.setOnClickListener(v -> {
-            ensureVisible();
-            mActivity.addNewSession(false, null);
-        });
-        mAddButton.setOnLongClickListener(v -> {
-            ensureVisible();
-            mActivity.showNamedSessionDialog(false);
-            return true;
-        });
+        installActionButtons();
+        syncHighlights();
     }
 
     public void render() {
         List<?> sessions = sessionList();
         boolean isEmpty = sessions == null || sessions.isEmpty();
         applyVisibility(isEmpty);
-        if (isEmpty) return;
+        if (isEmpty) {
+            syncHighlights();
+            return;
+        }
 
         mRoot.setBackground(theme().surface(mActivity, RADIUS_TAB_DP));
         mContainer.removeAllViews();
+        syncHighlights();
 
         TerminalSession current = mActivity.getCurrentSession();
         int gap = 4;
-        int tabW = TAG_WIDTH_PX-gap;
+        int tabW = TAG_WIDTH_PX - gap;
 
         for (int i = 0; i < sessions.size(); i++) {
             Object obj = sessions.get(i);
@@ -100,17 +97,25 @@ public final class SessionTabBar {
         }
     }
 
+    /**
+     * ★ 供 Activity 在抽屉开合 / Tab 切换 / 换肤时调用。
+     *    ☆ 与 ≡ 逻辑完全合并：只看抽屉是否开着且停在该 Tab，不再校验收藏面板展开。
+     */
+    public void syncHighlights() {
+        if (mBtnSnippet == null || mBtnMenu == null) return;
+        tint(mBtnSnippet, mActivity.isDrawerOnTabPublic(TAB_SNIPPET));
+        tint(mBtnMenu, mActivity.isDrawerOnTabPublic(TAB_MORE));
+        tint(mBtnAdd, false);
+    }
+
     public void dismissPopup() {
-        if (mPopup != null && mPopup.isShowing()) {
-            mPopup.dismiss();
-        }
+        if (mPopup != null && mPopup.isShowing()) mPopup.dismiss();
         mPopup = null;
     }
 
     public boolean onBackPressed() {
         if (mPopup != null && mPopup.isShowing()) {
             dismissPopup();
-            mTerminalView.requestFocus();
             return true;
         }
         return false;
@@ -138,6 +143,46 @@ public final class SessionTabBar {
 
     public void detach() { dismissPopup(); }
 
+    /* ================= ★ 三个按钮：从 session_action_bar.xml 取值绑定 ================= */
+
+    private void installActionButtons() {
+        if (mActionGroup == null) {
+            Logger.logWarn(LOG_TAG, "action_group 未找到，＋/☆/≡ 不安装");
+            return;
+        }
+        mBtnAdd = mActionGroup.findViewById(R.id.tab_add_button);
+        mBtnSnippet = mActionGroup.findViewById(R.id.snippet_button);
+        mBtnMenu = mActionGroup.findViewById(R.id.drawer_menu_button);
+
+        if (mBtnAdd == null || mBtnSnippet == null || mBtnMenu == null) {
+            Logger.logWarn(LOG_TAG, "＋/☆/≡ 有缺失，跳过绑定");
+            return;
+        }
+
+        mBtnAdd.setOnClickListener(v -> {
+            ensureVisible();
+            mActivity.addNewSession(false, null);
+        });
+        mBtnAdd.setOnLongClickListener(v -> {
+            mActivity.showNamedSessionDialog(false);
+            return true;
+        });
+        mBtnSnippet.setOnClickListener(v -> {
+            mActivity.openDrawerTabPublic(TAB_SNIPPET);
+            syncHighlights();
+        });
+        mBtnMenu.setOnClickListener(v -> {
+            mActivity.openDrawerTabPublic(TAB_MORE);
+            syncHighlights();
+        });
+    }
+
+    private void tint(ImageView iv, boolean active) {
+        if (iv == null) return;
+        iv.setColorFilter(active ? accent() : iconNormal());
+        iv.invalidate();
+    }
+
     /* ================= 内部工具 ================= */
 
     private List<?> sessionList() {
@@ -147,13 +192,10 @@ public final class SessionTabBar {
 
     /* ================= 标签项 ================= */
 
-    private void bindTag(TerminalSession session,
-                         int index,
-                         TerminalSession current,
-                         int tabW,
-                         int gap) {
-
-        View tab = mActivity.getLayoutInflater().inflate(R.layout.item_session_tab, mContainer, false);
+    private void bindTag(TerminalSession session, int index,
+                         TerminalSession current, int tabW, int gap) {
+        View tab = mActivity.getLayoutInflater()
+                .inflate(R.layout.item_session_tab, mContainer, false);
         View itemRoot = tab.findViewById(R.id.tab_item_root);
         View line = tab.findViewById(R.id.tab_top_line);
         ImageView icon = tab.findViewById(R.id.tab_icon);
@@ -188,11 +230,11 @@ public final class SessionTabBar {
             ensureVisible();
         });
 
+        // ★ 点击 more：只切会话，不 render()，避免重建标签栏导致键盘/扩展键栏收起
         more.setOnClickListener(v -> {
             v.getParent().requestDisallowInterceptTouchEvent(true);
             if (current != session) {
                 mActivity.setCurrentSession(session);
-                render();
             }
             showDrawer(more, session);
         });
@@ -227,83 +269,73 @@ public final class SessionTabBar {
         content.measure(
                 View.MeasureSpec.makeMeasureSpec(anchorW, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        int popupW = anchorW;
 
-        mPopup = new PopupWindow(content, popupW, ViewGroup.LayoutParams.WRAP_CONTENT, true);
-        mPopup.setBackgroundDrawable(new ColorDrawable(android.graphics.Color.TRANSPARENT));
+        mPopup = new PopupWindow(content, anchorW,
+                ViewGroup.LayoutParams.WRAP_CONTENT, true);
+
+        // ★ 不抢焦点，避免点击 more 后输入法 / 扩展键栏收起
+        mPopup.setFocusable(false);
+        mPopup.setTouchable(true);
         mPopup.setOutsideTouchable(true);
+
+        mPopup.setBackgroundDrawable(new ColorDrawable(android.graphics.Color.TRANSPARENT));
         mPopup.setAnimationStyle(0);
+
+        // ★ 保持当前输入法状态
         mPopup.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
         mPopup.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED);
+
         mPopup.setOnDismissListener(() -> mPopup = null);
 
         int[] loc = new int[2];
         anchor.getLocationOnScreen(loc);
         int gap = dp(DRAWER_GAP_DP);
         int y = loc[1] - content.getMeasuredHeight() - gap;
-        if (y < statusBarHeight()) {
-            y = loc[1] + anchor.getHeight() + gap;
-        }
+        if (y < statusBarHeight()) y = loc[1] + anchor.getHeight() + gap;
         mPopup.showAtLocation(anchor, Gravity.NO_GRAVITY, loc[0], y);
 
+        // ★ 菜单点击不再 requestFocus()，避免收键盘
         content.findViewById(R.id.item_rename).setOnClickListener(v -> {
-            dismissPopup(); mTerminalView.requestFocus(); rename(session);
+            dismissPopup();
+            rename(session);
         });
         content.findViewById(R.id.item_reset).setOnClickListener(v -> {
-            dismissPopup(); mTerminalView.requestFocus(); mActivity.resetSession(session);
+            dismissPopup();
+            mActivity.resetSession(session);
         });
-
         View kill = content.findViewById(R.id.item_kill);
         kill.setEnabled(session.isRunning());
         kill.setAlpha(session.isRunning() ? 1f : 0.4f);
         kill.setOnClickListener(v -> {
             if (!session.isRunning()) return;
             dismissPopup();
-            mTerminalView.requestFocus();
             mActivity.confirmKill(session);
         });
-
         content.findViewById(R.id.item_close).setOnClickListener(v -> {
             dismissPopup();
-            mTerminalView.post(() -> {
-                mTerminalView.requestFocus();
-                mActivity.closeSession(session);
-            });
+            mTerminalView.post(() -> mActivity.closeSession(session));
         });
     }
 
-    /** 把抽屉内所有文字/分隔线染成主题色，覆盖布局与样式里写死的颜色 */
     private void applyDrawerTextColors(View content) {
         if (content == null) return;
         int primary = drawerTextColor();
         int secondary = drawerTextSecondaryColor();
-
         int[] textIds = {R.id.item_rename, R.id.item_reset, R.id.item_kill, R.id.item_close};
         for (int id : textIds) {
             View v = content.findViewById(id);
-            if (v instanceof TextView) {
-                ((TextView) v).setTextColor(primary);
-            }
+            if (v instanceof TextView) ((TextView) v).setTextColor(primary);
         }
-
         View divider = content.findViewById(R.id.tab_popup_divider);
-        if (divider != null) {
-            divider.setBackgroundColor(secondary);
-        }
-
-        if (content instanceof ViewGroup) {
-            tintRemainingTexts((ViewGroup) content, primary);
-        }
+        if (divider != null) divider.setBackgroundColor(secondary);
+        if (content instanceof ViewGroup) tintRemainingTexts((ViewGroup) content, primary);
     }
 
     private void tintRemainingTexts(ViewGroup group, int color) {
         for (int i = 0; i < group.getChildCount(); i++) {
             View child = group.getChildAt(i);
-            if (child instanceof TextView) {
-                ((TextView) child).setTextColor(color);
-            } else if (child instanceof ViewGroup) {
-                tintRemainingTexts((ViewGroup) child, color);
-            }
+            if (child instanceof TextView) ((TextView) child).setTextColor(color);
+            else if (child instanceof ViewGroup) tintRemainingTexts((ViewGroup) child, color);
         }
     }
 
@@ -314,8 +346,7 @@ public final class SessionTabBar {
         if (h <= 0) h = (int) (40 * mRoot.getResources().getDisplayMetrics().density);
         mOriginalHeight = h;
         List<?> sessions = sessionList();
-        boolean isEmpty = sessions == null || sessions.isEmpty();
-        applyVisibility(isEmpty);
+        applyVisibility(sessions == null || sessions.isEmpty());
     }
 
     private void applyVisibility(boolean isEmpty) {
@@ -348,27 +379,15 @@ public final class SessionTabBar {
                 .show();
     }
 
-    /* ================= 调色（全部委托 Theme，零推导） ================= */
+    /* ================= 调色（全部委托 Theme） ================= */
 
     private Theme theme() { return ThemeStore.get(mActivity); }
-
-    private int titleActive()  { return theme().color(Theme.TEXT); }
-    private int titleNormal()  { return theme().color(Theme.TEXT_SEC); }
-    private int accent()       { return theme().color(Theme.ACCENT); }
-    private int iconNormal()   { return theme().color(Theme.TEXT_SEC); }
-
-    private int drawerTextColor() {
-        return theme().color(Theme.TEXT);
-    }
-
-    private int drawerTextSecondaryColor() {
-        return theme().color(Theme.DIVIDER);
-    }
-
-    /** 抽屉描边：沿用 Theme 的 OUTLINE 角色，不再自算 alpha。 */
-    private int drawerStrokeColor() {
-        return theme().color(Theme.OUTLINE);
-    }
+    private int titleActive() { return theme().color(Theme.TEXT); }
+    private int titleNormal() { return theme().color(Theme.TEXT_SEC); }
+    private int accent() { return theme().color(Theme.ACCENT); }
+    private int iconNormal() { return theme().color(Theme.TEXT_SEC); }
+    private int drawerTextColor() { return theme().color(Theme.TEXT); }
+    private int drawerTextSecondaryColor() { return theme().color(Theme.DIVIDER); }
 
     /* ================= 工具 ================= */
 

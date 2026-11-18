@@ -9,26 +9,26 @@
     android:fitsSystemWindows="true">
 
     <!-- ========== 终端主体区 ========== -->
-    <RelativeLayout
-        android:id="@+id/activity_termux_root_relative_layout"
+    <LinearLayout
+        android:id="@+id/activity_termux_root_frame"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_marginHorizontal="3dp"
-        android:layout_marginVertical="0dp">
+        android:orientation="vertical">
 
         <androidx.drawerlayout.widget.DrawerLayout
             android:id="@+id/drawer_layout"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:layout_alignParentTop="true"
-            android:layout_above="@+id/terminal_toolbar_view_pager">
+            android:layout_height="0dp"
+            android:layout_weight="1">
 
-            <!-- ★ 主内容：必须保持为 DrawerLayout 的第 0 个 child -->
+            <!-- 主内容：必须保持为 DrawerLayout 的第 0 个 child -->
             <com.termux.view.TerminalView
                 android:id="@+id/terminal_view"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
+                android:layout_marginBottom="4dp"
+
                 android:defaultFocusHighlightEnabled="false"
                 android:focusableInTouchMode="true"
                 android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
@@ -37,106 +37,69 @@
 
             <!--
                 ★ 左抽屉：无 background / 无 outline / 无 clipToOutline
-                  圆角·底色·描边·壁纸分支全部由 Theme.surface() 在代码里挂上
+                  圆角·底色·描边由 Theme.surface() 在代码里挂
                   内容由 installDrawerPanel() 动态填充
             -->
             <FrameLayout
                 android:id="@+id/left_drawer"
                 android:layout_width="240dp"
                 android:layout_height="match_parent"
-                android:layout_marginVertical="50dp"
                 android:layout_gravity="start" />
         </androidx.drawerlayout.widget.DrawerLayout>
-
-    </RelativeLayout>
 
         <!-- ★ 扩展键栏：背景不写死，由 reloadActivityStyling() 套主题 -->
         <androidx.viewpager.widget.ViewPager
             android:id="@+id/terminal_toolbar_view_pager"
             android:layout_width="match_parent"
             android:layout_height="38dp"
-            android:layout_alignParentBottom="true"
             android:visibility="gone" />
+
+    </LinearLayout>
+
     <!-- ========== 底部栏：Session 标签在此，背景由 SessionTabBar.render() 套主题 ========== -->
-    <RelativeLayout
+    <LinearLayout
         android:id="@+id/tab_bar_root"
         android:layout_width="match_parent"
         android:layout_height="32dp"
-        android:minHeight="32dp">
+        android:layout_marginVertical="4dp"
+        android:minHeight="32dp"
+        android:orientation="horizontal">
 
-        <LinearLayout
-            android:layout_width="match_parent"
+        <HorizontalScrollView
+            android:id="@+id/tab_scroll_view"
+            android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:orientation="horizontal">
+            android:layout_weight="4"
+            android:scrollbars="none"
+            android:fillViewport="true">
 
-            <HorizontalScrollView
-                android:id="@+id/tab_scroll_view"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="4"
-                android:scrollbars="none"
-                android:fillViewport="true">
-
-                <LinearLayout
-                    android:id="@+id/tab_container"
-                    android:layout_width="wrap_content"
-                    android:layout_height="match_parent"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical" />
-            </HorizontalScrollView>
-
-            <!--
-                ★ ＋ / ☆ / ≡ 不写 textColor：由
-                  SnippetManager.cacheDrawerButtonColors / tintDrawerButton
-                  按 Theme.ACCENT / Theme.ICON 动态着色
-            -->
             <LinearLayout
-                android:id="@+id/action_group"
-                android:layout_width="0dp"
+                android:id="@+id/tab_container"
+                android:layout_width="wrap_content"
                 android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:gravity="center_vertical" />
+        </HorizontalScrollView>
 
-                <TextView
-                    android:id="@+id/tab_add_button"
-                    style="?attr/selectableItemBackgroundBorderless"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="＋"
-                    android:textSize="18sp"
-                    android:contentDescription="@string/action_new_session" />
+        <!--
+            ★ ＋ / ☆ / ≡ 已拆到 session_action_bar.xml
+              由 SessionTabBar.installActionButtons() 绑定：
+              tab_add_button / snippet_button / drawer_menu_button
+              不着色写死，由 tint() 按 Theme.ACCENT / Theme.ICON 动态着色
+        -->
+        <include
+            android:id="@+id/action_group"
+            layout="@layout/session_action_bar"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1" />
 
-                <TextView
-                    android:id="@+id/snippet_button"
-                    style="?attr/selectableItemBackgroundBorderless"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="☆"
-                    android:textSize="15sp"
-                    android:contentDescription="@string/action_snippets" />
+    </LinearLayout>
 
-                <TextView
-                    android:id="@+id/drawer_menu_button"
-                    style="?attr/selectableItemBackgroundBorderless"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:gravity="center"
-                    android:text="≡"
-                    android:textSize="16sp"
-                    android:contentDescription="@string/action_open_drawer" />
-            </LinearLayout>
-        </LinearLayout>
-    </RelativeLayout>
-
-    <View
+    <!-- ========== 底部安全区占位 ========== -->
+    <Space
         android:id="@+id/activity_termux_bottom_space_view"
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@android:color/transparent" />
+        android:layout_height="1dp" />
 
 </com.termux.app.terminal.TermuxActivityRootView>

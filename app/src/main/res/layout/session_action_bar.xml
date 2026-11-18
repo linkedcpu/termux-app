@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/action_group"
+    android:layout_width="0dp"
+    android:layout_height="match_parent"
+    android:layout_weight="1"
+    android:orientation="horizontal">
+
+    <ImageView
+        android:id="@+id/tab_add_button"
+        style="?attr/selectableItemBackgroundBorderless"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:scaleType="centerInside"
+        android:padding="6dp"
+        android:src="@drawable/ic_new_session"
+        android:contentDescription="@string/action_new_session"
+        tools:ignore="ContentDescription" />
+
+    <ImageView
+        android:id="@+id/snippet_button"
+        style="?attr/selectableItemBackgroundBorderless"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:scaleType="centerInside"
+        android:padding="6dp"
+        android:src="@drawable/ic_drawer_snippet"
+        android:contentDescription="@string/action_snippets"
+        tools:ignore="ContentDescription" />
+
+    <ImageView
+        android:id="@+id/drawer_menu_button"
+        style="?attr/selectableItemBackgroundBorderless"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:scaleType="centerInside"
+        android:padding="6dp"
+        android:src="@drawable/ic_drawer_more"
+        android:contentDescription="@string/action_open_drawer"
+        tools:ignore="ContentDescription" />
+
+</LinearLayout>

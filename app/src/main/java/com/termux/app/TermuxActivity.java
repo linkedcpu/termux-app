@@ -21,9 +21,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
-import android.widget.RelativeLayout;
 import android.widget.Toast;
-import android.graphics.Color;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -72,7 +71,11 @@ import com.termux.view.TerminalView;
  *
  * <p>☆ / ≡ 为「导航专用」按钮：点击永远打开抽屉并跳到对应页；抽屉已开则直接跨 Tab 切换，
  * 永不负责关闭。关闭交由抽屉原生方式（侧滑 / 点遮罩 / 返回键）。
- * 高亮为纯查询结果：抽屉开着 且 当前页匹配（☆ 还需收藏面板展开）。
+ * 高亮规则（☆ 与 ≡ 完全合并）：抽屉开着 且 当前页匹配。
+ *
+ * <p>★★ ＋ / ☆ / ≡ 三个按钮的创建、绑定、着色已全部内聚到 SessionTabBar，
+ *   本类只通过 openDrawerTabPublic / isDrawerOnTabPublic 提供业务能力，
+ *   不再直接持有按钮 View，也不再判断收藏面板展开状态。
  */
 public final class TermuxActivity extends AppCompatActivity implements ServiceConnection {
 
@@ -102,10 +105,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private View mSnippetPanel;
     private DrawerPanel mDrawerPanel;
     private TerminalContextMenu mContextMenu;
-
-    /** ★ 高亮色缓存（换肤时刷新） */
-    private int mAccentColor = 0xFF9800;
-    private int mNormalColor = 0xFF8A8A8A;
 
     private static final String TAB_SNIPPET = "snippet";
     private static final String TAB_MORE = "more";
@@ -164,16 +163,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setTerminalToolbarView(savedInstanceState);
         installDrawerPanel();
         setupDrawerListener();
-        bindDrawerToggle(R.id.snippet_button, TAB_SNIPPET);
-        bindDrawerToggle(R.id.drawer_menu_button, TAB_MORE);
 
+        // ★ ＋/☆/≡ 已内聚到 SessionTabBar，此处只传 action_group 容器
         mSessionTabBar =
                 new SessionTabBar(
                         this,
                         mTerminalView,
                         findViewById(R.id.tab_bar_root),
-                        findViewById(R.id.tab_container),
-                        findViewById(R.id.tab_add_button));
+                        (LinearLayout) findViewById(R.id.tab_container),
+                        (LinearLayout) findViewById(R.id.action_group));
         mSessionTabBar.init();
 
         mContextMenu =
@@ -436,7 +434,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     /** ★ 主题联动：抽屉 / 收藏夹 / 标签栏 / ☆ ≡ / 扩展键栏 一起刷新 */
     private void applyThemeToUi() {
-        cacheDrawerButtonColors();
         if (mDrawerPanel != null) mDrawerPanel.reloadTheme();
         if (mSnippetMgr != null && mSnippetMgr.isExpanded()) mSnippetMgr.reloadTheme();
         if (mSessionTabBar != null) mSessionTabBar.render();
@@ -452,17 +449,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     /* ========================================================= */
     /* ★ 底部 ☆ / ≡ ：导航专用（永不关闭抽屉）                    */
     /* ========================================================= */
-
-    /** 绑定一个导航按钮：点击永远打开抽屉并跳到 tabKey 对应页 */
-    private void bindDrawerToggle(int btnId, final String tabKey) {
-        View btn = findViewById(btnId);
-        if (btn == null) return;
-        btn.setOnClickListener(v -> {
-            openDrawerTab(tabKey);
-            syncDrawerButtonHighlights();
-        });
-        syncDrawerButtonHighlights();
-    }
 
     /** 打开左抽屉并切到指定 Tab（openDrawer 幂等：已开时仅切页） */
     private void openDrawerTab(@NonNull String tabKey) {
@@ -480,11 +466,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         syncDrawerButtonHighlights();
     }
 
-    /** 统一刷新 ☆ / ≡ 高亮：抽屉开着 且 停在对应页（☆ 额外要求面板展开） */
+    /** 统一刷新 ☆ / ≡ 高亮：转发给 SessionTabBar（纯查询结果，不再校验面板展开） */
     private void syncDrawerButtonHighlights() {
-        tintDrawerButton(R.id.snippet_button,
-                isDrawerOnTab(TAB_SNIPPET) && isSnippetExpanded());
-        tintDrawerButton(R.id.drawer_menu_button, isDrawerOnTab(TAB_MORE));
+        if (mSessionTabBar != null) mSessionTabBar.syncHighlights();
     }
 
     private boolean isDrawerOnTab(String tabKey) {
@@ -493,33 +477,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         return mDrawerPanel != null && mDrawerPanel.isCurrentTab(tabKey);
     }
 
-    private void tintDrawerButton(int btnId, boolean active) {
-        View btn = findViewById(btnId);
-        if (btn == null) return;
-        int color = active ? mAccentColor : mNormalColor;
-        if (btn instanceof android.widget.TextView) {
-            ((android.widget.TextView) btn).setTextColor(color);
-        }
-        if (btn instanceof android.widget.ImageView) {
-            ((android.widget.ImageView) btn).setColorFilter(color);
-        }
-        btn.invalidate();
+    /* ============ ★ 供 SessionTabBar 调用的业务转发 ============ */
+
+    public void openDrawerTabPublic(@NonNull String tabKey) {
+        openDrawerTab(tabKey);
     }
 
-    /** ★ 修复：不再使用已删除的 ThemeManager / ThemeSpec，统一从 Theme 获取颜色。 */
-    private void cacheDrawerButtonColors() {
-        try {
-            Theme theme = ThemeStore.get(this);
-            mAccentColor = theme.color(Theme.ACCENT);
-            mNormalColor = theme.color(Theme.ICON);
-        } catch (Throwable ignored) {
-            mAccentColor = Color.parseColor("#FF9800");
-            mNormalColor = Color.parseColor("#8A8A8A");
-        }
-    }
-
-    private boolean isSnippetExpanded() {
-        return mSnippetMgr != null && mSnippetMgr.isExpanded();
+    public boolean isDrawerOnTabPublic(String tabKey) {
+        return isDrawerOnTab(tabKey);
     }
 
     /* ========================================================= */
@@ -535,7 +500,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
 
         mSnippetMgr = new SnippetManager(this);
-        mSnippetMgr.setOnStateChanged(this::syncDrawerButtonHighlights);
+        // ★ 面板展开/收起只影响内容，不再参与 ☆ 高亮判定；此处仅保留刷新入口
+        mSnippetMgr.setOnStateChanged(() -> syncDrawerButtonHighlights());
 
         ViewGroup parent = (ViewGroup) tv.getParent();
         if (parent == null) return;
@@ -558,7 +524,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         parent.addView(wrapper, idx, tv.getLayoutParams());
         mSnippetMgr.collapse();
-        cacheDrawerButtonColors();
         syncDrawerButtonHighlights();
     }
 
@@ -577,9 +542,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private void setMargins() {
-        RelativeLayout rl = findViewById(R.id.activity_termux_root_relative_layout);
+        // ★ 优化版布局已无 activity_termux_root_relative_layout，
+        //   现为 LinearLayout#activity_termux_root_frame；用 ViewGroup 接收避免依赖 RelativeLayout。
+        ViewGroup frame = findViewById(R.id.activity_termux_root_frame);
+        if (frame == null) {
+            Logger.logWarn(LOG_TAG, "activity_termux_root_frame 未找到，跳过 margin 设置");
+            return;
+        }
         ViewUtils.setLayoutMarginsInDp(
-                rl,
+                frame,
                 mProperties.getTerminalMarginHorizontal(),
                 mProperties.getTerminalMarginVertical(),
                 mProperties.getTerminalMarginHorizontal(),
@@ -1044,7 +1015,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if ("storage".equals(i.getStringExtra(TERMUX_ACTIVITY.EXTRA_RELOAD_STYLE))) {
             i.removeExtra(TERMUX_ACTIVITY.EXTRA_RELOAD_STYLE);
             i.setAction(TERMUX_ACTIVITY.ACTION_REQUEST_PERMISSIONS);
-        }
+            }
     }
 
     class TermuxActivityBroadcastReceiver extends BroadcastReceiver {
