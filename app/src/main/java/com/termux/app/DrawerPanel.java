@@ -15,10 +15,12 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import com.termux.shared.logger.Logger;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.drawable.DrawableCompat;
 
@@ -44,6 +46,9 @@ import java.io.InputStream;
  *
  * ★ Tab 图标：TextView + compound drawable，与 SnippetManager.setBtnIcon 同一路径。
  * ★ Tab 栏自适应：≤ MAX_FIT_TABS 时 weight 均分铺满；超出自动横滑。
+ *
+ * ★★ 收藏夹只在此处挂载（buildSnippetPage），TermuxActivity 不再拆装视图树；
+ *    SnippetManager 由构造期注入，不再通过 Activity 反向 getter 获取。
  */
 public final class DrawerPanel {
 
@@ -64,6 +69,8 @@ public final class DrawerPanel {
     private static final int ICON_MORE    = R.drawable.ic_drawer_more;
     private static final int ICON_SNIPPET = R.drawable.ic_drawer_snippet;
     private static final int ICON_ABOUT   = R.drawable.ic_drawer_about;
+
+    private static final String LOG_TAG = "DrawerPanel";
 
     /* ================= Tab 定义（数组驱动） ================= */
 
@@ -98,6 +105,9 @@ public final class DrawerPanel {
     private final LinearLayout mTabContainer;
     private final FrameLayout mContent;
 
+    /** ★ 构造期注入，不再反向依赖 Activity.getSnippetManager() */
+    private final SnippetManager mSnippet;
+
     private Theme mTheme;
     private int mColorBg;
     private int mColorSurface;
@@ -111,14 +121,17 @@ public final class DrawerPanel {
     private View mSelectedTab;
     private ActivityResultLauncher<String> mPickImage;
 
-    private SnippetManager mSnippet;
     private boolean mSnippetTabActive = false;
 
     private String mCurrentTabKey = null;
     private Runnable mOnTabChanged;
 
-    public DrawerPanel(@NonNull TermuxActivity activity) {
+    public DrawerPanel(@NonNull TermuxActivity activity, @Nullable SnippetManager snippet) {
         mActivity = activity;
+        mSnippet = snippet;
+        if (mSnippet != null) {
+            mSnippet.setTabMode(true);
+        }
 
         applyColors();
 
@@ -195,6 +208,10 @@ public final class DrawerPanel {
             openTab(mCurrentTabKey);
         } else if (mTabContainer.getChildCount() > 0) {
             mTabContainer.getChildAt(0).performClick();
+        }
+        // ★ 收藏夹常驻抽屉，主题变化后无条件刷新，不再判断 isExpanded()
+        if (mSnippet != null) {
+            mSnippet.reloadTheme();
         }
     }
 
@@ -483,11 +500,14 @@ public final class DrawerPanel {
         return option;
     }
 
+    /**
+     * ★ 收藏夹页：面板由注入的 SnippetManager 提供，
+     *   复用同一实例（buildPanel 内部需 return mPanel），切 Tab 不重复建树。
+     */
     private void buildSnippetPage() {
         try {
             if (mSnippet == null) {
-                mSnippet = mActivity.getSnippetManager();
-                mSnippet.setTabMode(true);
+                throw new IllegalStateException("SnippetManager 未注入");
             }
             View panel = mSnippet.buildPanel();
             if (panel.getParent() instanceof ViewGroup) {
@@ -508,6 +528,7 @@ public final class DrawerPanel {
             mContent.removeAllViews();
             mContent.addView(host);
         } catch (Throwable t) {
+            Logger.logWarn(LOG_TAG, "收藏夹加载失败: " + t.getMessage());
             mSnippetTabActive = false;
             LinearLayout page = newPage();
             page.addView(makeText("收藏夹", 16, true));

@@ -73,9 +73,9 @@ import com.termux.view.TerminalView;
  * 永不负责关闭。关闭交由抽屉原生方式（侧滑 / 点遮罩 / 返回键）。
  * 高亮规则（☆ 与 ≡ 完全合并）：抽屉开着 且 当前页匹配。
  *
- * <p>★★ ＋ / ☆ / ≡ 三个按钮的创建、绑定、着色已全部内聚到 SessionTabBar，
- *   本类只通过 openDrawerTabPublic / isDrawerOnTabPublic 提供业务能力，
- *   不再直接持有按钮 View，也不再判断收藏面板展开状态。
+ * <p>★★ ＋ / ☆ / ≡ 三个按钮的创建、绑定、着色已全部内聚到 SessionTabBar。
+ * <p>★★ 收藏夹只挂抽屉（DrawerPanel.buildSnippetPage），本类不再拆装视图树、
+ *    不再持有 mSnippetPanel、不再判断 isExpanded；只负责 new / save / 注入。
  */
 public final class TermuxActivity extends AppCompatActivity implements ServiceConnection {
 
@@ -102,7 +102,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     private SessionTabBar mSessionTabBar;
     private SnippetManager mSnippetMgr;
-    private View mSnippetPanel;
     private DrawerPanel mDrawerPanel;
     private TerminalContextMenu mContextMenu;
 
@@ -158,7 +157,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setTermuxTerminalViewAndClients();
 
-        attachInlineSnippetPanel();
+        // ★ 收藏夹只随抽屉挂载，TerminalView 保持 DrawerLayout 直接子节点，
+        //   不再被 wrapper 包裹，消除嵌套 weight 的偶发空白。
+        mSnippetMgr = new SnippetManager(this);
+        mSnippetMgr.setTabMode(true);
 
         setTerminalToolbarView(savedInstanceState);
         installDrawerPanel();
@@ -311,6 +313,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         removeTermuxActivityRootViewGlobalLayoutListener();
         unregisterTermuxActivityBroadcastReceiver();
         getDrawer().closeDrawers();
+        // ★ 收藏夹生命周期仍由 Activity 驱动（合理），其余装配细节已内聚
         if (mSnippetMgr != null) mSnippetMgr.save();
     }
 
@@ -397,7 +400,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     /* ========================================================= */
-    /* ★ 左抽屉面板                                              */
+    /* ★ 左抽屉面板（收藏夹由 DrawerPanel 自行挂载）              */
     /* ========================================================= */
 
     private void installDrawerPanel() {
@@ -405,7 +408,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (leftDrawer == null) return;
         leftDrawer.removeAllViews();
 
-        mDrawerPanel = new DrawerPanel(this);
+        // ★ 构造期注入 SnippetManager，断开 DrawerPanel → Activity 的反向 getter 依赖
+        mDrawerPanel = new DrawerPanel(this, mSnippetMgr);
         mDrawerPanel.setOnTabChanged(this::syncDrawerButtonHighlights);
 
         LinearLayout.LayoutParams lp =
@@ -435,7 +439,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     /** ★ 主题联动：抽屉 / 收藏夹 / 标签栏 / ☆ ≡ / 扩展键栏 一起刷新 */
     private void applyThemeToUi() {
         if (mDrawerPanel != null) mDrawerPanel.reloadTheme();
-        if (mSnippetMgr != null && mSnippetMgr.isExpanded()) mSnippetMgr.reloadTheme();
+        // ★ 收藏夹常驻抽屉，不再判断 isExpanded()
+        if (mSnippetMgr != null) mSnippetMgr.reloadTheme();
         if (mSessionTabBar != null) mSessionTabBar.render();
         applyThemeToExtraKeys();
         syncDrawerButtonHighlights();
@@ -463,10 +468,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         } else {
             Logger.logWarn(LOG_TAG, "DrawerPanel 未就绪，tabKey=" + tabKey);
         }
-        syncDrawerButtonHighlights();
+        // ★ 此处不做同步：抽屉动画未结束时查到的仍是旧状态，会覆盖乐观高亮；
+        //   真正校正交给 onDrawerOpened / DrawerPanel.onTabChanged → syncDrawerButtonHighlights()
     }
 
-    /** 统一刷新 ☆ / ≡ 高亮：转发给 SessionTabBar（纯查询结果，不再校验面板展开） */
+    /** 统一刷新 ☆ / ≡ 高亮：转发给 SessionTabBar（纯查询结果，不看面板展开） */
     private void syncDrawerButtonHighlights() {
         if (mSessionTabBar != null) mSessionTabBar.syncHighlights();
     }
@@ -485,46 +491,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     public boolean isDrawerOnTabPublic(String tabKey) {
         return isDrawerOnTab(tabKey);
-    }
-
-    /* ========================================================= */
-    /* ★ 内嵌收藏夹（仅由抽屉的「收藏夹」Tab 使用）                */
-    /* ========================================================= */
-
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    private void attachInlineSnippetPanel() {
-        TerminalView tv = findViewById(R.id.terminal_view);
-        if (tv == null) {
-            Logger.logWarn(LOG_TAG, "terminal_view 未找到，收藏夹不挂载");
-            return;
-        }
-
-        mSnippetMgr = new SnippetManager(this);
-        // ★ 面板展开/收起只影响内容，不再参与 ☆ 高亮判定；此处仅保留刷新入口
-        mSnippetMgr.setOnStateChanged(() -> syncDrawerButtonHighlights());
-
-        ViewGroup parent = (ViewGroup) tv.getParent();
-        if (parent == null) return;
-
-        int idx = parent.indexOfChild(tv);
-        parent.removeView(tv);
-
-        LinearLayout wrapper = new LinearLayout(this);
-        wrapper.setOrientation(LinearLayout.VERTICAL);
-        wrapper.setLayoutParams(new ViewGroup.LayoutParams(-1, -1));
-
-        mSnippetPanel = mSnippetMgr.buildPanel();
-        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(-1, dp(340));
-        plp.setMargins(dp(8), dp(6), dp(8), 0);
-        wrapper.addView(mSnippetPanel, plp);
-
-        LinearLayout.LayoutParams tvlp = new LinearLayout.LayoutParams(-1, 0, 1f);
-        tvlp.setMargins(0, dp(6), 0, 0);
-        wrapper.addView(tv, tvlp);
-
-        parent.addView(wrapper, idx, tv.getLayoutParams());
-        mSnippetMgr.collapse();
-        syncDrawerButtonHighlights();
     }
 
     /* ========================================================= */
@@ -979,11 +945,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (mSessionTabBar != null) mSessionTabBar.render();
     }
 
-    /** ★ 供 DrawerPanel 操作收藏夹 */
-    public SnippetManager getSnippetManager() {
-        return mSnippetMgr;
-    }
-
     public TermuxAppSharedPreferences getPreferences() {
         return mPreferences;
     }
@@ -1015,7 +976,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if ("storage".equals(i.getStringExtra(TERMUX_ACTIVITY.EXTRA_RELOAD_STYLE))) {
             i.removeExtra(TERMUX_ACTIVITY.EXTRA_RELOAD_STYLE);
             i.setAction(TERMUX_ACTIVITY.ACTION_REQUEST_PERMISSIONS);
-            }
+        }
     }
 
     class TermuxActivityBroadcastReceiver extends BroadcastReceiver {
@@ -1077,13 +1038,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onBackPressed() {
         if (mSessionTabBar != null && mSessionTabBar.onBackPressed()) return;
+        // ★ 收藏夹挂抽屉后，关闭交给抽屉原生逻辑，不再有 collapse 分支
         if (getDrawer().isDrawerOpen(Gravity.LEFT)) {
             getDrawer().closeDrawers();
-            return;
-        }
-        if (mSnippetMgr != null && mSnippetMgr.isExpanded()) {
-            mSnippetMgr.collapse();
-            syncDrawerButtonHighlights();
             return;
         }
         finishActivityIfNotFinishing();
