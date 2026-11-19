@@ -26,13 +26,10 @@ public final class ThemeStore {
         SharedPreferences sp = prefs(c);
         migrateIfNeeded(c, sp);
         String name = sp.getString(KEY_NAME, ThemePreset.ALL[0].name);
-        String wp = sp.getString(KEY_WALLPAPER, null);
-        boolean hasWp = wp != null && !wp.isEmpty();
-        String key = name + "|" + hasWp + "|" + (hasWp ? wp.hashCode() : 0);
         Theme t = sCache;
-        if (t == null || !key.equals(sKey)) {
-            sKey = key;
-            sCache = new Theme(ThemePreset.get(ThemePreset.indexOf(name)), hasWp ? wp : null);
+        if (t == null || !name.equals(sKey)) {
+            sKey = name;
+            sCache = new Theme(ThemePreset.get(ThemePreset.indexOf(name)));
         }
         return sCache;
     }
@@ -40,17 +37,7 @@ public final class ThemeStore {
     public static void select(Context c, int index) {
         ThemePreset p = ThemePreset.get(index);
         prefs(c).edit().putString(KEY_NAME, p.name).apply();
-        TerminalColorsWriter.apply(c, p);   // 单向联动终端配色
-        invalidate();
-    }
-
-    public static void setWallpaper(Context c, String path) {
-        prefs(c).edit().putString(KEY_WALLPAPER, path).apply();
-        invalidate();
-    }
-
-    public static void clearWallpaper(Context c) {
-        prefs(c).edit().remove(KEY_WALLPAPER).apply();
+        TerminalColorsWriter.apply(c, p); // 单向联动终端配色
         invalidate();
     }
 
@@ -60,22 +47,27 @@ public final class ThemeStore {
         invalidate();
     }
 
-    public static boolean hasWallpaper(Context c) {
-        String wp = prefs(c).getString(KEY_WALLPAPER, null);
-        return wp != null && !wp.isEmpty();
-    }
-
-        public static boolean isSelected(Context c, int index) {
+    public static boolean isSelected(Context c, int index) {
         SharedPreferences sp = prefs(c);
-        return ThemePreset.get(index).name.equals(
-                sp.getString(KEY_NAME, ThemePreset.ALL[0].name));
+        return ThemePreset.get(index).name.equals(sp.getString(KEY_NAME, ThemePreset.ALL[0].name));
     }
 
+    public static String currentName(Context c) {
+        return prefs(c).getString(KEY_NAME, ThemePreset.ALL[0].name);
+    }
 
-    public static void invalidate() { sCache = null; }
+    public static void invalidate() {
+        sCache = null;
+    }
 
     private static void migrateIfNeeded(Context c, SharedPreferences sp) {
-        if (sp.contains(KEY_NAME)) return;
+        if (sp.contains(KEY_NAME)) {
+            // 壁纸功能已移除：顺手清掉历史遗留字段
+            if (sp.contains(KEY_WALLPAPER)) {
+                sp.edit().remove(KEY_WALLPAPER).apply();
+            }
+            return;
+        }
         SharedPreferences old = c.getSharedPreferences(OLD_PREF, Context.MODE_PRIVATE);
         int idx = old.contains(OLD_KEY_PRESET) ? old.getInt(OLD_KEY_PRESET, 0) : 0;
         sp.edit().putString(KEY_NAME, ThemePreset.get(idx).name).apply();

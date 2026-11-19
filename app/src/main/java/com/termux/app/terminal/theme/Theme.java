@@ -2,28 +2,20 @@ package com.termux.app.terminal.theme;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.BlurMaskFilter;
-import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.Paint;
-import android.graphics.Shader;
-import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.LayerDrawable;
-
-import androidx.core.graphics.drawable.RoundedBitmapDrawable;
-import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory;
-
-import java.util.ArrayList;
 
 /**
  * 已解析主题：不可变快照。控件只调语义入口，不做任何推导：
- *   color(角色) / panel() / surface() / button() / radius() / stroke() / pillButtons()
+ *   color(角色) / page() / card() / tab() / button() / radius() / stroke()
  *
- * ★ 全项目唯一的推导、壁纸态分支、毛玻璃实现都在这里。控件不判壁纸、不判亮度、不混色。
+ * ★ 理论最优形态：
+ *   1. 解析与渲染分离 —— 本类只持「结论」（色值/明暗/动效），Drawable 构造交给 ThemeRenderer；
+ *   2. 层级基准收口 —— R_PAGE/CARD/TAB/BTN 私有常量，皮肤只调 radiusScale；
+ *   3. 渲染缓存 —— 同快照下同名层级的 Drawable 复用，滚动不重复构造；
+ *   4. 明暗可覆盖 —— preset.forceDark 兜底全透明主题；
+ *   5. 无壁纸维度 —— dark/scrim/text 只由 preset 决定，单一维度、无 Bitmap 生命周期。
  */
 public final class Theme {
 
@@ -43,36 +35,46 @@ public final class Theme {
     public static final int
             STATE_NONE = 0, STATE_SELECTED = 1, STATE_PRESSED = 2, STATE_DISABLED = 3;
 
-    /** 圆角层级基准由控件给，皮肤只给倍率 */
-    public static final float RADIUS_NONE = 0f, RADIUS_SMALL = 6f, RADIUS_MEDIUM = 12f, RADIUS_LARGE = 20f;
+    /** 圆角层级基准 dp：控件只说「我是哪一层」，皮肤只给倍率 */
+    private static final float
+            R_PAGE_DP = 14f, R_CARD_DP = 12f, R_TAB_DP = 10f, R_BTN_DP = 8f;
 
-    /** ★ 材质格子基准尺寸(dp)，皮肤可用 ThemeShape.textureTileDp 覆盖 */
+    /**
+     * 公开圆角别名：控件若想自己挑档位（如 pill 切换）用这两个，
+     * 常规场景仍走 page()/card()/tab()/button() 无参入口。
+     */
+    public static final float RADIUS_LARGE = R_PAGE_DP;
+    public static final float RADIUS_SMALL = R_BTN_DP;
+
+    /** 材质格子基准尺寸(dp)，皮肤可用 ThemeShape.textureTileDp 覆盖 */
     private static final float TEXTURE_TILE_DP = 24f;
 
-    /* ================= 字段 ================= */
+    /* ================= 字段（全不可变） ================= */
 
     private final ThemePreset preset;
     private final ThemeShape shape;
     private final ThemeTexture texture;
     private final ThemeMotion motion;
+    private final ThemeRenderer renderer;
 
     private final boolean dark;
     private final int bg;
     private final int surface;
     private final int accent;
     private final int text;
-    private int scrim;
-    private final String wallpaper;
+    private final int scrim;
 
-    /** ★ 壁纸解码缓存：只在本类内部流转，控件永远拿不到 Bitmap */
-    private Bitmap wallpaperBitmap;
+    public Theme(ThemePreset p) {
+        this(p, ThemeRenderer.INSTANCE);
+    }
 
-    public Theme(ThemePreset p, String wallpaper) {
+    /** 测试/替换渲染实现用；常规调用走单参构造 */
+    Theme(ThemePreset p, ThemeRenderer renderer) {
         this.preset = p != null ? p : ThemePreset.ALL[0];
         this.shape = this.preset.shape != null ? this.preset.shape : ThemeShape.classic();
         this.texture = this.preset.texture;
         this.motion = this.preset.motion != null ? this.preset.motion : ThemeMotion.standard();
-        this.wallpaper = wallpaper;
+        this.renderer = renderer != null ? renderer : ThemeRenderer.INSTANCE;
 
         this.bg = this.preset.bg;
         this.surface = this.preset.surface != 0 ? this.preset.surface : this.preset.bg;
@@ -81,24 +83,12 @@ public final class Theme {
         int s = this.preset.scrim;
         this.scrim = s == 0 ? (isDark(this.bg) ? 0x59000000 : 0xe6000000) : (s | 0xff000000);
 
-        // ★ 唯一的壁纸态分支：亮度与 SCRIM 按壁纸「左上 1/4」判定
-        boolean hasWp = wallpaper != null && !wallpaper.isEmpty();
-        if (hasWp) {
-            Bitmap wp = decodeScaled(wallpaper, 1080, 1920);
-            if (wp != null) {
-                this.wallpaperBitmap = wp;
-                this.dark = isDark(avgColorLeftTop(wp));
-                this.scrim = this.dark ? 0x59000000 : 0xa6000000;
-            } else {
-                this.dark = isDark(this.bg);
-            }
-        } else {
-            this.dark = isDark(this.bg);
-        }
+        // ★ 明暗：preset.forceDark 可显式覆盖，兜底全透明/半透明主题
+        Boolean fd = this.preset.forceDark;
+        this.dark = fd != null ? fd : isDark(this.bg);
+
         this.text = this.dark ? 0xffe6e6e6 : ink(this.surface);
     }
-
-    public Theme(ThemePreset p) { this(p, null); }
 
     /* ================= 颜色 ================= */
 
@@ -119,7 +109,7 @@ public final class Theme {
             case DIVIDER:     return alpha(text, dark ? 0x22 : 0x18);
             case OUTLINE:     return alpha(text, dark ? 0x40 : 0x30);
             case SCRIM:       return scrim;
-            case WALLPAPER:   return 0;
+            case WALLPAPER:   return 0;  // @deprecated 壁纸已移除，恒透明
             case DANGER:      return 0xffe05050;
             default:          return surface;
         }
@@ -134,6 +124,14 @@ public final class Theme {
             default:             return base;
         }
     }
+
+    /** 语义颜色快捷方法：控件最常引用的四个 */
+    public int textPrimary()   { return text; }
+    public int textSecondary() { return color(TEXT_SEC); }
+    public int accent()        { return accent; }
+    public int onAccent()      { return inkOn(accent); }
+    public int icon()          { return color(ICON); }
+    public int iconActive()    { return accent; }
 
     /* ================= 形状 ================= */
 
@@ -153,154 +151,45 @@ public final class Theme {
 
     public ThemeShape shape() { return shape; }
 
-    /* ================= 绘制入口 ================= */
+    /* ================= 层级背景（无参语义入口，带缓存） ================= */
 
-    /**
-     * ★ 根背景：
-     *   壁纸态 → [毛玻璃]壁纸 → SCRIM → 描边层
-     *   纯色态 → 不透明面板 → 材质 → 描边层
-     */
-    public Drawable panel(Context ctx, float radiusBaseDp) {
-        if (wallpaperBitmap != null) {
-            ArrayList<Drawable> layers = new ArrayList<>();
-            if (blurEnabled()) {
-                layers.add(roundedWallpaper(ctx, blurredBmp(ctx, 1.0f, 4), radiusBaseDp));
-            } else {
-                layers.add(roundedWallpaper(ctx, wallpaperBitmap, radiusBaseDp));
-            }
-            layers.add(scrimDrawable(ctx, radiusBaseDp));
-            layers.add(outlineOnly(ctx, radiusBaseDp));
-            return new LayerDrawable(layers.toArray(new Drawable[0]));
-        }
-        ArrayList<Drawable> layers = new ArrayList<>();
-        layers.add(solidSurface(ctx, radiusBaseDp));
-        Bitmap tile = textureTile(ctx);
-        if (tile != null) layers.add(tileDrawable(ctx, tile));
-        layers.add(outlineOnly(ctx, radiusBaseDp));
-        return new LayerDrawable(layers.toArray(new Drawable[0]));
-    }
+    public Drawable page(Context ctx)   { return renderer.layer(this, ctx, 'p', R_PAGE_DP, false); }
+    public Drawable card(Context ctx)   { return renderer.layer(this, ctx, 'c', R_CARD_DP, false); }
+    public Drawable tab(Context ctx)    { return renderer.layer(this, ctx, 't', R_TAB_DP,  false); }
+    public Drawable button(Context ctx) { return renderer.layer(this, ctx, 'b', R_BTN_DP,  true); }
 
-    /** ★ 页面/卡片表面：壁纸态半透明面板 + 轻模糊，纯色态不透明面板 + 材质 */
+    /** 逃逸口：自定义 View 需要非标准圆角时用；不入缓存 */
     public Drawable surface(Context ctx, float radiusBaseDp) {
-        if (wallpaperBitmap != null) {
-            GradientDrawable g = new GradientDrawable();
-            g.setShape(GradientDrawable.RECTANGLE);
-            g.setColor(alpha(surface, dark ? 0x59 : 0xa6));
-            g.setCornerRadius(radius(ctx, radiusBaseDp));
-            int sw = stroke(ctx);
-            if (sw > 0) g.setStroke(sw, color(OUTLINE));
-            if (blurEnabled()) {
-                return new LayerDrawable(new Drawable[]{
-                        roundedWallpaper(ctx, blurredBmp(ctx, 0.5f, 6), radiusBaseDp), g});
-            }
-            return g;
-        }
-        ArrayList<Drawable> layers = new ArrayList<>();
-        layers.add(solidSurface(ctx, radiusBaseDp));
-        Bitmap tile = textureTile(ctx);
-        if (tile != null) layers.add(tileDrawable(ctx, tile));
-        if (stroke(ctx) > 0) layers.add(outlineOnly(ctx, radiusBaseDp));
-        return new LayerDrawable(layers.toArray(new Drawable[0]));
+        return renderer.buildSurface(this, ctx, radiusBaseDp);
     }
 
-    /** ★ 按钮背景：形态与透明度由皮肤决定 */
+    /* ---- 兼容重载：旧调用点仍传 (Context, radiusDp)，转发到无参/逃逸口 ---- */
+
     public Drawable button(Context ctx, float radiusBaseDp) {
+        return Math.abs(radiusBaseDp - R_BTN_DP) < 0.01f
+                ? button(ctx) : renderer.buildSurface(this, ctx, radiusBaseDp);
+    }
+
+    public Drawable panel(Context ctx, float radiusBaseDp) {
+        return Math.abs(radiusBaseDp - R_PAGE_DP) < 0.01f
+                ? page(ctx) : renderer.buildSurface(this, ctx, radiusBaseDp);
+    }
+
+    public Drawable card(Context ctx, float radiusBaseDp) {
+        return Math.abs(radiusBaseDp - R_CARD_DP) < 0.01f
+                ? card(ctx) : renderer.buildSurface(this, ctx, radiusBaseDp);
+    }
+
+    public Drawable tab(Context ctx, float radiusBaseDp) {
+        return Math.abs(radiusBaseDp - R_TAB_DP) < 0.01f
+                ? tab(ctx) : renderer.buildSurface(this, ctx, radiusBaseDp);
+    }
+
+    public Drawable accentBg(Context ctx) {
         GradientDrawable g = new GradientDrawable();
         g.setShape(GradientDrawable.RECTANGLE);
-        if (wallpaperBitmap != null) {
-            g.setColor(dark ? 0x33ffffff : 0x22000000);
-        } else {
-            g.setColor(color(SURFACE, STATE_PRESSED));
-        }
-        if (pillButtons()) {
-            g.setCornerRadius(100f * density(ctx));
-        } else {
-            g.setCornerRadius(radius(ctx, radiusBaseDp));
-        }
-        int sw = stroke(ctx);
-        if (sw > 0) g.setStroke(sw, color(OUTLINE));
-        Bitmap tile = textureTile(ctx);
-        if (tile == null) return g;
-        return new LayerDrawable(new Drawable[]{g, tileDrawable(ctx, tile)});
-    }
-
-    /** ★ 材质小图必须平铺，否则被拉伸成糊图 */
-    private static BitmapDrawable tileDrawable(Context ctx, Bitmap tile) {
-        BitmapDrawable td = new BitmapDrawable(ctx.getResources(), tile);
-        td.setTileModeXY(Shader.TileMode.REPEAT, Shader.TileMode.REPEAT);
-        return td;
-    }
-
-    private Drawable solidSurface(Context ctx, float radiusBaseDp) {
-        GradientDrawable g = new GradientDrawable();
-        g.setShape(GradientDrawable.RECTANGLE);
-        g.setColor(color(SURFACE));
-        g.setCornerRadius(radius(ctx, radiusBaseDp));
-        int sw = stroke(ctx);
-        if (sw > 0) g.setStroke(sw, color(OUTLINE));
-        return g;
-    }
-
-    private Drawable outlineOnly(Context ctx, float radiusBaseDp) {
-        GradientDrawable g = new GradientDrawable();
-        g.setShape(GradientDrawable.RECTANGLE);
-        g.setColor(0x00000000);
-        g.setCornerRadius(radius(ctx, radiusBaseDp));
-        int sw = stroke(ctx);
-        if (sw > 0) g.setStroke(sw, color(OUTLINE));
-        return g;
-    }
-
-    /* ================= 毛玻璃 ================= */
-
-    /** 皮肤决定是否开毛玻璃：blurRadiusDp > 0 即开启 */
-    private boolean blurEnabled() {
-        return shape.blurRadiusDp > 0f && wallpaperBitmap != null && !wallpaperBitmap.isRecycled();
-    }
-
-    /**
-     * ★ 毛玻璃层：壁纸降采样 → BlurMaskFilter 模糊 → 放大回原尺寸。
-     *   scale 控制模糊强度倍率（根背景 1.0，页面 0.5），
-     *   div 控制降采样分母（越大越快越糊）。
-     */
-    /** ★ 只产出模糊 Bitmap，不包装；圆角交给 roundedWallpaper */
-    private Bitmap blurredBmp(Context ctx, float scale, int div) {
-        Bitmap src = wallpaperBitmap;
-        int radius = Math.round(shape.blurRadiusDp * scale * density(ctx));
-        if (radius < 1) radius = 1;
-        if (div < 2) div = 2;
-        int sw = Math.max(1, src.getWidth() / div);
-        int sh = Math.max(1, src.getHeight() / div);
-        Bitmap small = Bitmap.createScaledBitmap(src, sw, sh, false);
-        Bitmap out = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888);
-        Canvas c = new Canvas(out);
-        Paint p = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
-        p.setMaskFilter(new BlurMaskFilter(radius, BlurMaskFilter.Blur.NORMAL));
-        c.drawBitmap(small, 0, 0, p);
-        small.recycle();
-        return out;
-    }
-
-    /** ★ 壁纸层按主题圆角裁剪，否则直角壁纸从圆角描边外侧漏出 */
-        /** ★ 壁纸层按主题圆角裁剪，否则直角壁纸从圆角描边外侧漏出 */
-        /** ★ 壁纸层按主题圆角裁剪，否则直角壁纸从圆角描边外侧漏出 */
-    private Drawable roundedWallpaper(Context ctx, Bitmap bmp, float radiusBaseDp) {
-        RoundedBitmapDrawable rd = RoundedBitmapDrawableFactory.create(ctx.getResources(), bmp);
-        rd.setCornerRadius(radius(ctx, radiusBaseDp));
-        rd.setAntiAlias(true);
-        rd.setFilterBitmap(true);
-        rd.setGravity(android.view.Gravity.FILL);   // 或 Gravity.CENTER 做居中裁剪
-        return rd;
-    }
-
-
-
-    /** ★ SCRIM 跟着圆角走，否则蒙层同样漏角 */
-    private Drawable scrimDrawable(Context ctx, float radiusBaseDp) {
-        GradientDrawable g = new GradientDrawable();
-        g.setShape(GradientDrawable.RECTANGLE);
-        g.setColor(scrim);
-        g.setCornerRadius(radius(ctx, radiusBaseDp));
+        g.setColor(accent);
+        g.setCornerRadius(radius(ctx, R_BTN_DP));
         return g;
     }
 
@@ -312,7 +201,7 @@ public final class Theme {
         return texture == null ? 0 : alpha(text, dark ? 0x14 : 0x10);
     }
 
-    /** ★ 修复：原先误把 bg 颜色当尺寸传给 tile()，导致材质永远不显示 */
+    /** 材质小图（已按 textureTileDp × density 生成），平铺由渲染层处理 */
     public Bitmap textureTile(Context ctx) {
         if (texture == null || ctx == null) return null;
         if (texture.kind() == ThemeTexture.NONE) return null;
@@ -329,70 +218,15 @@ public final class Theme {
 
     public boolean isDark()        { return dark; }
     public boolean isTranslucent() { return Color.alpha(bg) < 0xff; }
-    public boolean hasWallpaper()  { return wallpaper != null && !wallpaper.isEmpty(); }
-    public String  wallpaperPath() { return wallpaper; }
     public int     scrimAlpha()    { return scrim; }
     public ThemePreset preset()    { return preset; }
 
-    public Bitmap decodeWallpaper(String path) {
-        if (wallpaperBitmap != null) return wallpaperBitmap;
-        return decodeScaled(path, 1080, 1920);
-    }
+    /** 兼容旧调用方；无壁纸实现下为空操作 */
+    public void release() { }
 
-    /** 释放壁纸缓存；主题切换或销毁时调用 */
-    public void release() {
-        if (wallpaperBitmap != null && !wallpaperBitmap.isRecycled()) {
-            wallpaperBitmap.recycle();
-        }
-        wallpaperBitmap = null;
-    }
+    /* ================= 推导规则（包级可见，供渲染层复用） ================= */
 
-    private static Bitmap decodeScaled(String path, int maxW, int maxH) {
-        if (path == null || path.isEmpty()) return null;
-        try {
-            BitmapFactory.Options probe = new BitmapFactory.Options();
-            probe.inJustDecodeBounds = true;
-            BitmapFactory.decodeFile(path, probe);
-            int w = probe.outWidth, h = probe.outHeight;
-            if (w <= 0 || h <= 0) return null;
-            int sample = 1;
-            while (w / sample > maxW || h / sample > maxH) sample *= 2;
-            BitmapFactory.Options d = new BitmapFactory.Options();
-            d.inSampleSize = sample;
-            d.inPreferredConfig = Bitmap.Config.RGB_565;
-            return BitmapFactory.decodeFile(path, d);
-        } catch (Throwable ignored) {
-            return null;
-        }
-    }
-
-    private static int avgColorLeftTop(Bitmap bmp) {
-        try {
-            Bitmap s = Bitmap.createScaledBitmap(bmp, 8, 8, false);
-            long r = 0, g = 0, b = 0, n = 0;
-            for (int y = 0; y < 4; y++) {
-                for (int x = 0; x < 4; x++) {
-                    int c = s.getPixel(x, y);
-                    r += Color.red(c);
-                    g += Color.green(c);
-                    b += Color.blue(c);
-                    n++;
-                }
-            }
-            s.recycle();
-            if (n == 0) return 0xff000000;
-            return 0xff000000
-                    | ((int) (r / n)) << 16
-                    | ((int) (g / n)) << 8
-                    | (int) (b / n);
-        } catch (Throwable ignored) {
-            return 0xff000000;
-        }
-    }
-
-    /* ================= 推导规则 ================= */
-
-    private static int ink(int surface) {
+    static int ink(int surface) {
         float k = 0.14f, t = 0x08;
         return 0xff000000
                 | ((int) (Color.red(surface) * k + t * (1 - k))) << 16
@@ -400,12 +234,12 @@ public final class Theme {
                 | (int) (Color.blue(surface) * k + t * (1 - k));
     }
 
-    private static int inkOn(int accent) {
+    static int inkOn(int accent) {
         return lum(Color.red(accent), Color.green(accent), Color.blue(accent)) < 0x60
                 ? 0xffffffff : 0xff1f2328;
     }
 
-    private static boolean isDark(int c) {
+    static boolean isDark(int c) {
         int r = Color.red(c), g = Color.green(c), b = Color.blue(c);
         int a = Color.alpha(c);
         if (a != 0xff) {
@@ -414,15 +248,19 @@ public final class Theme {
             g = (int) (g * k + 0x14 * (1 - k));
             b = (int) (b * k + 0x14 * (1 - k));
         }
+        // alpha=0 时合成到 0x14 灰底，避免透明/全透明主题恒判深色
         return lum(r, g, b) < 0x60;
     }
 
-    private static float lum(int r, int g, int b) {
+    static float lum(int r, int g, int b) {
         return 0.299f * r + 0.587f * g + 0.114f * b;
     }
 
-    private static int mix(int a, int b, float k) {
-        return 0xff000000
+    /** ★ 保留源 alpha：半透明色派生不再丢透明度 */
+    static int mix(int a, int b, float k) {
+        int aa = Color.alpha(a), ba = Color.alpha(b);
+        int mixedA = (int) (aa + (ba - aa) * k);
+        return mixedA << 24
                 | ((int) (Color.red(a) + (Color.red(b) - Color.red(a)) * k)) << 16
                 | ((int) (Color.green(a) + (Color.green(b) - Color.green(a)) * k)) << 8
                 | (int) (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * k);
@@ -432,7 +270,7 @@ public final class Theme {
         return (c & 0x00ffffff) | (a << 24);
     }
 
-    private static float density(Context ctx) {
+    static float density(Context ctx) {
         return ctx != null ? ctx.getResources().getDisplayMetrics().density : 1f;
     }
 }

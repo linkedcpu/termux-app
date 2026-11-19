@@ -3,11 +3,9 @@ package com.termux.app.terminal;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
-import android.net.Uri;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.LayoutInflater;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -17,8 +15,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 import com.termux.shared.logger.Logger;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
@@ -28,21 +24,19 @@ import com.termux.R;
 import com.termux.app.SnippetManager;
 import com.termux.app.TermuxActivity;
 import com.termux.app.terminal.theme.Theme;
+import com.termux.app.terminal.theme.ThemeMotion;
+import com.termux.app.terminal.theme.ThemeMotionPlayer;
 import com.termux.app.terminal.theme.ThemePreset;
 import com.termux.app.terminal.theme.ThemeStore;
 import com.termux.shared.termux.TermuxConstants;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-
 /**
  * ★ 左抽屉面板（Tab 化 + 界面主题管理器 + 收藏夹 + 更多菜单）
  *
- * 外观只调三类语义入口，不判壁纸、不判亮度、不写死色值/圆角/时长：
- *   mTheme.color(角色)              —— 配色
- *   mTheme.panel / surface / button —— 形状 + 材质 + 壁纸，全部由 Theme 决定
- *   mTheme.radius / stroke / pillButtons / motion —— 皮肤参数
+ * 外观只调语义入口，不传圆角魔法数字、不判亮度、不写死色值/时长：
+ *   mTheme.color(角色)                 —— 配色
+ *   mTheme.page / tab / card / button  —— 层级背景，基准 dp 收口在 Theme 内
+ *   ThemeMotionPlayer.attach(v, mTheme)—— 点击动效，效果由皮肤 motion() 决定
  *
  * ★ Tab 图标：TextView + compound drawable，与 SnippetManager.setBtnIcon 同一路径。
  * ★ Tab 栏自适应：≤ MAX_FIT_TABS 时 weight 均分铺满；超出自动横滑。
@@ -59,11 +53,6 @@ public final class DrawerPanel {
 
     /** ★ 不超过这个数量就均分铺满、不启用横滑 */
     private static final int MAX_FIT_TABS     = 5;
-
-    /** 层级基准：控件只说「我是哪一层」，圆润倍率由皮肤决定 */
-    private static final float RADIUS_PAGE_DP = 14f;
-    private static final float RADIUS_TAB_DP  = 10f;
-    private static final float RADIUS_BTN_DP  = 8f;
 
     private static final int ICON_THEME   = R.drawable.ic_drawer_theme;
     private static final int ICON_MORE    = R.drawable.ic_drawer_more;
@@ -109,17 +98,12 @@ public final class DrawerPanel {
     private final SnippetManager mSnippet;
 
     private Theme mTheme;
-    private int mColorBg;
-    private int mColorSurface;
     private int mColorText;
     private int mColorTextSec;
     private int mColorIcon;
     private int mColorAccent;
-    private int mColorOutline;
-    private int mPressDuration;
 
     private View mSelectedTab;
-    private ActivityResultLauncher<String> mPickImage;
 
     private boolean mSnippetTabActive = false;
 
@@ -139,10 +123,9 @@ public final class DrawerPanel {
         mTabContainer = mRoot.findViewById(R.id.drawer_tab_container);
         mContent = mRoot.findViewById(R.id.drawer_content);
 
-        // ★ 去掉系统阴影，避免圆角外四角露出 scrim
+        // ★ 去掉系统阴影，避免圆角外四角露出底色
         mRoot.setElevation(0f);
 
-        registerPickImage();
         applyPanel();
 
         buildTabs();
@@ -183,25 +166,30 @@ public final class DrawerPanel {
 
     private void applyColors() {
         mTheme = ThemeStore.get(mActivity);
-        mColorBg         = mTheme.color(Theme.BG);
-        mColorSurface    = mTheme.color(Theme.SURFACE);
-        mColorText       = mTheme.color(Theme.TEXT);
-        mColorTextSec    = mTheme.color(Theme.TEXT_SEC);
+        mColorText       = mTheme.textPrimary();
+        mColorTextSec    = mTheme.textSecondary();
         mColorIcon       = mTheme.color(Theme.ICON);
-        mColorAccent     = mTheme.color(Theme.ACCENT);
-        mColorOutline    = mTheme.color(Theme.OUTLINE);
-        mPressDuration   = mTheme.motion().pressDurationMs;
+        mColorAccent     = mTheme.accent();
     }
 
-    /** ★ 一行拿到抽屉根背景：壁纸/材质/蒙层/圆角/描边全在 Theme 里决定 */
+    /** ★ 一行拿到抽屉根背景：材质/圆角/描边全在 Theme 里决定 */
     private void applyPanel() {
-        mRoot.setBackground(mTheme.panel(mActivity, RADIUS_PAGE_DP));
+        mRoot.setBackground(mTheme.page(mActivity));
     }
 
     /** ★ 供 TermuxActivity 切主题后调用：重新取色并重绘整个抽屉 */
     public void reloadTheme() {
         applyColors();
         applyPanel();
+
+        // ★ 切主题过渡：时长/是否启用都来自皮肤，控件不写死
+        ThemeMotion m = mTheme.motion();
+        if (m.animateThemeSwitch && m.themeSwitchDurationMs > 0) {
+            mRoot.animate().cancel();
+            mRoot.setAlpha(0.6f);
+            mRoot.animate().setDuration(m.themeSwitchDurationMs).alpha(1f).start();
+        }
+
         setupVersion();
         buildTabs();
         if (mCurrentTabKey != null) {
@@ -212,54 +200,6 @@ public final class DrawerPanel {
         // ★ 收藏夹常驻抽屉，主题变化后无条件刷新，不再判断 isExpanded()
         if (mSnippet != null) {
             mSnippet.reloadTheme();
-        }
-    }
-
-    private void registerPickImage() {
-        try {
-            mPickImage = mActivity.registerForActivityResult(
-                    new ActivityResultContracts.GetContent(), uri -> {
-                        if (uri != null) {
-                            String path = copyImageToPrivate(uri);
-                            if (path != null) {
-                                ThemeStore.setWallpaper(mActivity, path);
-                                reloadTheme();
-                            }
-                        }
-                    });
-        } catch (Exception ignored) {
-            mPickImage = null;
-        }
-    }
-
-    private void pickWallpaper() {
-        if (mPickImage != null) {
-            mPickImage.launch("image/*");
-        } else {
-            Toast.makeText(mActivity, "当前环境不支持选图", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private String copyImageToPrivate(Uri uri) {
-        InputStream in = null;
-        FileOutputStream out = null;
-        try {
-            in = mActivity.getContentResolver().openInputStream(uri);
-            if (in == null) return null;
-            File dir = new File(mActivity.getFilesDir(), "theme");
-            if (!dir.exists() && !dir.mkdirs()) return null;
-            File dst = new File(dir, "theme_wallpaper.img");
-            out = new FileOutputStream(dst);
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            out.flush();
-            return dst.getAbsolutePath();
-        } catch (Exception e) {
-            return null;
-        } finally {
-            try { if (in != null) in.close(); } catch (Exception ignored) { }
-            try { if (out != null) out.close(); } catch (Exception ignored) { }
         }
     }
 
@@ -300,7 +240,6 @@ public final class DrawerPanel {
         }
         mTabContainer.setWeightSum(fit ? defs.length : 0f);
 
-        int dp = dp(1);
         for (TabDef def : defs) {
             final TextView tab = new TextView(mActivity);
             tab.setText("");
@@ -323,24 +262,14 @@ public final class DrawerPanel {
 
             final String tabKey = def.key;
             final Runnable pageBuilder = def.builder;
-            final int pressMs = mPressDuration;
             tab.setOnClickListener(v -> {
                 mSnippetTabActive = "snippet".equals(tabKey);
                 selectTab(tab);
                 pageBuilder.run();
                 notifyTabChanged(tabKey);
             });
-            tab.setOnTouchListener((v, e) -> {
-                if (e.getAction() == MotionEvent.ACTION_DOWN) {
-                    v.animate().cancel();
-                    v.animate().setDuration(pressMs).alpha(0.5f).start();
-                } else if (e.getAction() == MotionEvent.ACTION_UP
-                        || e.getAction() == MotionEvent.ACTION_CANCEL) {
-                    v.animate().cancel();
-                    v.animate().setDuration(pressMs).alpha(1f).start();
-                }
-                return false;
-            });
+            // ★ 动效交给 Player：效果/时长由皮肤 motion() 决定，NONE 时零开销
+            ThemeMotionPlayer.attach(tab, mTheme);
 
             setTabIcon(tab, def.icon, mColorIcon);
             tab.setBackground(tabBackground(false));
@@ -348,9 +277,9 @@ public final class DrawerPanel {
         }
     }
 
-    /** ★ Tab 背景：选中态走 STATE_SELECTED，形状与壁纸适配都在 Theme 内 */
+    /** ★ Tab 背景：层级语义由 Theme 决定，选中态只换图标色 */
     private Drawable tabBackground(boolean selected) {
-        return mTheme.surface(mActivity, RADIUS_TAB_DP);
+        return mTheme.tab(mActivity);
     }
 
     /** ★ 与 SnippetManager.setBtnIcon 同一写法 */
@@ -456,14 +385,6 @@ public final class DrawerPanel {
             options.addView(makeThemeOption(i, ThemePreset.get(i).name));
         }
         page.addView(options);
-
-        page.addView(makeButton("从相册选择背景图", v -> pickWallpaper()));
-        if (ThemeStore.hasWallpaper(mActivity)) {
-            page.addView(makeButton("清除背景图", v -> {
-                ThemeStore.clearWallpaper(mActivity);
-                reloadTheme();
-            }));
-        }
         showPage(page);
     }
 
@@ -497,6 +418,8 @@ public final class DrawerPanel {
             ThemeStore.select(mActivity, index);
             mActivity.applyThemeToUiFromDrawer();
         });
+        // ★ 皮肤条目也吃动效（果冻/拉伸皮肤下切换更跟手）
+        ThemeMotionPlayer.attach(option, mTheme);
         return option;
     }
 
@@ -570,7 +493,7 @@ public final class DrawerPanel {
         LinearLayout page = new LinearLayout(mActivity);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(dp(4), dp(4), dp(4), dp(4));
-        page.setBackground(mTheme.surface(mActivity, RADIUS_PAGE_DP));   // ★ 一行，无 if
+        page.setBackground(mTheme.card(mActivity));      // ★ 无参，层级由 Theme 决定
         return page;
     }
 
@@ -601,34 +524,15 @@ public final class DrawerPanel {
         view.setGravity(Gravity.CENTER);
         view.setPadding(dp(12), dp(10), dp(12), dp(10));
         view.setTextColor(mColorAccent);
-        view.setBackground(mTheme.button(mActivity, RADIUS_BTN_DP));    // ★ 一行，无 if
+        view.setBackground(mTheme.button(mActivity));    // ★ 无参，胶囊皮肤自动生效
         view.setOnClickListener(listener);
-        final int pressMs = mPressDuration;
-        view.setOnTouchListener((v, e) -> {
-            if (e.getAction() == MotionEvent.ACTION_DOWN) {
-                v.animate().cancel();
-                v.animate().setDuration(pressMs).alpha(0.6f).start();
-            } else if (e.getAction() == MotionEvent.ACTION_UP
-                    || e.getAction() == MotionEvent.ACTION_CANCEL) {
-                v.animate().cancel();
-                v.animate().setDuration(pressMs).alpha(1f).start();
-            }
-            return false;
-        });
+        // ★ 动效交给 Player：删掉原手写 setOnTouchListener，效果由皮肤决定
+        ThemeMotionPlayer.attach(view, mTheme);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.setMargins(0, dp(8), 0, 0);
         view.setLayoutParams(params);
         return view;
-    }
-
-    private int getSelectableItemBackground() {
-        TypedValue value = new TypedValue();
-        if (mActivity.getTheme().resolveAttribute(
-                android.R.attr.selectableItemBackground, value, true)) {
-            return value.resourceId;
-        }
-        return 0;
     }
 
     private int dp(float value) {
