@@ -46,6 +46,9 @@ import java.util.List;
  * <p>★★ 显隐不变式：<b>内存 mVisible 与磁盘 KEY_VISIBLE 永远同值</b>。
  * 所有写入只经 {@link #setVisibleNow}，{@link #ensureVisible} 只读不写、且内部一致性校正不落盘，
  * 避免「回前台把磁盘状态带偏」导致的重启后自动展开。
+ *
+ * <p>★★ 高度不变式：<b>Session 栏高度由 XML（tab_bar_root 的 layout_height）唯一决定</b>，
+ * 本类只切 visibility、不碰 LayoutParams，因此改布局文件立刻生效。
  */
 public final class SessionTabBar {
 
@@ -148,7 +151,6 @@ public final class SessionTabBar {
     private final LinearLayout mActionGroup;
 
     private boolean mVisible = true;
-    private int mOriginalHeight = 0;
     /** 标签 more 菜单 */
     private PopupWindow mPopup;
     /** ☆/≡/＋ 长按选择器 */
@@ -188,13 +190,13 @@ public final class SessionTabBar {
     /* ================= 公开 API ================= */
 
     public void init() {
-        mRoot.post(this::captureOriginalHeight);
         restoreShortcut();
         installActionButtons();
         // ★ 启动读回持久化显隐：默认展开，老版本覆盖安装后不消失。
         //   只改内存，不写盘——磁盘此刻就是权威值，再写一遍属无意义 IO。
         mVisible = prefs().getBoolean(KEY_VISIBLE, true);
-        if (!mVisible) applyVisibility(false);
+        // ★ 高度不再由 Java 捕获/覆盖，直接按当前显隐与会话状态切一次 visibility
+        applyVisibility(sessionList() == null || sessionList().isEmpty());
         syncHighlights();
     }
 
@@ -843,22 +845,18 @@ public final class SessionTabBar {
         if (content instanceof ViewGroup) tintRemainingTexts((ViewGroup) content, primary);
     }
 
-    /* ================= 显隐 / 尺寸 ================= */
+    /* ================= 显隐（高度由 XML 决定） ================= */
 
-    private void captureOriginalHeight() {
-        int h = mRoot.getHeight();
-        if (h <= 0) h = (int) (40 * mRoot.getResources().getDisplayMetrics().density);
-        mOriginalHeight = h;
-        List<?> sessions = sessionList();
-        applyVisibility(sessions == null || sessions.isEmpty());
-    }
-
+    /**
+     * ★ 唯一职责：切 visibility，不碰 LayoutParams。
+     * 高度完全交给 XML 中 tab_bar_root 的 layout_height，Java 侧不再捕获或覆盖，
+     * 因此改布局文件立刻生效。
+     * - 无会话    → GONE
+     * - 用户隐藏  → GONE
+     * - 其余      → VISIBLE
+     */
     private void applyVisibility(boolean isEmpty) {
-        mRoot.setVisibility(isEmpty ? View.GONE : View.VISIBLE);
-        if (mOriginalHeight == 0) return;
-        ViewGroup.LayoutParams lp = mRoot.getLayoutParams();
-        lp.height = mVisible ? mOriginalHeight : 0;
-        mRoot.setLayoutParams(lp);
+        mRoot.setVisibility((isEmpty || !mVisible) ? View.GONE : View.VISIBLE);
     }
 
     /* ================= 重命名 ================= */

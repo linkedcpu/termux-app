@@ -89,7 +89,8 @@ public final class ThemePreset {
     }
 
     /* ============================================================
-     * ★ 最优预设组：日用 8 + 特色 4 + 全透明 1 = 13 套
+     * ★ 最优预设组：日用 8 + 特色 4 + 全透明 1 + Ubuntu 1
+     *   + Apple 2 + Windows 2 + Windows XP 1 = 19 套
      *   · 无重名；index 稳定；只追加不插队
      *   · 浓度 0.04~0.10（日用）/ 0.18~0.30（验证）；格子 20~40dp
      *   · 描边 ≤0.5dp（日用）/ 1~2.5dp（漫画风）
@@ -196,6 +197,7 @@ public final class ThemePreset {
                 ThemeMotion.standard()),
 
         /* ---- 特色 · 形状演示 3 ---- */
+        // 8 漫画 / 果冻粉 / 旋涡青 / 干脆黑白，见下
         // 8 漫画：直角 + 粗描边 + 硬投影 + 点阵纸纹，辨识度最高
         new ThemePreset(
                 "漫画",
@@ -257,6 +259,82 @@ public final class ThemePreset {
                 ThemeTexture.none(),
                 ThemeMotion.standard(),
                 Boolean.TRUE),
+
+        /* ---- 特色 · Ubuntu 1（追加在末尾，不动已有 index） ---- */
+        // 13 Ubuntu：经典紫底 + 橙强调，经典主题风格
+        new ThemePreset(
+                "Ubuntu",
+                0xff300a24,
+                0xff3b0d2e,
+                0xffe95400,
+                0x59000000,
+                "ubuntu",
+                ThemeShape.classic(),
+                ThemeTexture.none(),
+                ThemeMotion.standard()),
+
+        /* ---- 特色 · Apple 2（追加在末尾，不动已有 index） ---- */
+        // 14 苹果浅色：HIG 分组浅灰底 #F2F2F7 + 白卡面 + 系统蓝 #007AFF，squircle 大圆角
+        new ThemePreset(
+                "苹果浅色",
+                0xfff2f2f7,
+                0xffffffff,
+                0xff007aff,
+                0x14000000,
+                "apple-light",
+                new ThemeShape(1.0f, 0.5f, false, 0f, 20f),
+                ThemeTexture.none(),
+                ThemeMotion.standard()),
+
+        // 15 苹果深色：OLED 黑底 #000000 + 抬升层 #1C1C1E + 深模态蓝 #0A84FF，克制无材质
+        new ThemePreset(
+                "苹果深色",
+                0xff000000,
+                0xff1c1c1e,
+                0xff0a84ff,
+                0x59000000,
+                "apple-dark",
+                new ThemeShape(1.0f, 0.5f, false, 0f, 20f),
+                ThemeTexture.none(),
+                ThemeMotion.standard()),
+
+        /* ---- 特色 · Windows 2（追加在末尾，不动已有 index） ---- */
+        // 16 Windows 浅色：Fluent 浅灰底 #F3F3F3 + 白卡面 + 主题蓝 #0067C0，细微圆角 + Mica 淡噪点
+        new ThemePreset(
+                "Windows 浅色",
+                0xfff3f3f3,
+                0xffffffff,
+                0xff0067c0,
+                0x14000000,
+                "windows-light",
+                new ThemeShape(1.0f, 0.5f, false, 0f, 8f),
+                ThemeTexture.noise(0.04f),
+                ThemeMotion.standard()),
+
+        // 17 Windows 深色：深灰底 #202020 + 抬升层 #2B2B2B + 亮蓝 #4CC2FF，Acrylic 感半透蒙层
+        new ThemePreset(
+                "Windows 深色",
+                0xff202020,
+                0xff2b2b2b,
+                0xff4cc2ff,
+                0x59000000,
+                "windows-dark",
+                new ThemeShape(1.0f, 0.5f, false, 0f, 8f),
+                ThemeTexture.noise(0.05f),
+                ThemeMotion.standard()),
+
+        /* ---- 特色 · Windows XP 1（追加在末尾，不动已有 index） ---- */
+        // 18 Windows XP：经典蓝天白云底 #58A4E0 + 银灰卡面 #ECE9DD + 作品蓝 #0054E3
+        new ThemePreset(
+                "Windows XP",
+                0xff58a4e0,
+                0xffece9dd,
+                0xff0054e3,
+                0x14000000,
+                "windows-xp",
+                new ThemeShape(1.0f, 0.5f, false, 0f, 6f),
+                ThemeTexture.none(),
+                ThemeMotion.standard()),
     };
 
     /** 不可变视图，防止外部改数组元素 */

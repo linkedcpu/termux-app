@@ -27,7 +27,8 @@ public final class TerminalColorsWriter {
     private TerminalColorsWriter() {}
 
     /**
-     * 内置方案：dark / light / warm / ink-blue。
+     * 内置方案：dark / light / warm / ink-blue / ubuntu /
+     *          apple-light / apple-dark / windows-light / windows-dark / windows-xp。
      * 也可把 name 换成你自己的 .termux/colors/ 文件名。
      *
      * @return 是否实际写入并触发了重载
@@ -136,6 +137,61 @@ public final class TerminalColorsWriter {
                         + "color4=#6cb6ff\ncolor5=#b79cff\ncolor6=#66cfd6\ncolor7=#e3ecf3\n"
                         + "color8=#6c7a88\ncolor9=#ff9c9c\ncolor10=#8adaa0\ncolor11=#f0d385\n"
                         + "color12=#8cc6ff\ncolor13=#c9b0ff\ncolor14=#8ae0e0\ncolor15=#ffffff\n";
+
+            /* ★ Ubuntu 经典终端配色（Tango / Ubuntu default） */
+            case "ubuntu":
+                return ""
+                        + "background=#300a24\nforeground=#eeeeec\ncursor=#eeeeec\n"
+                        + "color0=#2e3436\ncolor1=#cc0000\ncolor2=#4e9a06\ncolor3=#c4a000\n"
+                        + "color4=#3465a4\ncolor5=#75507b\ncolor6=#06989a\ncolor7=#d3d7cf\n"
+                        + "color8=#555753\ncolor9=#ef2929\ncolor10=#8ae234\ncolor11=#fce94f\n"
+                        + "color12=#729fcf\ncolor13=#ad7fa8\ncolor14=#34e2e2\ncolor15=#eeeeec\n";
+
+            /* ★ Apple 终端配色：浅色 = 系统白底 + 系统蓝/语义色 */
+            case "apple-light":
+                return ""
+                        + "background=#ffffff\nforeground=#1d1d1f\ncursor=#007aff\n"
+                        + "color0=#1d1d1f\ncolor1=#ff3b30\ncolor2=#34c759\ncolor3=#ff9500\n"
+                        + "color4=#007aff\ncolor5=#af52de\ncolor6=#5ac8fa\ncolor7=#6e6e73\n"
+                        + "color8=#86868b\ncolor9=#ff453a\ncolor10=#30d158\ncolor11=#ff9f0a\n"
+                        + "color12=#0a84ff\ncolor13=#bf5af2\ncolor14=#64d2ff\ncolor15=#000000\n";
+
+            /* ★ Apple 终端配色：深色 = OLED 黑底 + 深模态蓝/语义色 */
+            case "apple-dark":
+                return ""
+                        + "background=#000000\nforeground=#f5f5f7\ncursor=#0a84ff\n"
+                        + "color0=#1c1c1e\ncolor1=#ff453a\ncolor2=#30d158\ncolor3=#ff9f0a\n"
+                        + "color4=#0a84ff\ncolor5=#bf5af2\ncolor6=#64d2ff\ncolor7=#a1a1a6\n"
+                        + "color8=#48484a\ncolor9=#ff6961\ncolor10=#4cd964\ncolor11=#ffcc00\n"
+                        + "color12=#64d2ff\ncolor13=#d668f0\ncolor14=#7ee0ea\ncolor15=#ffffff\n";
+
+            /* ★ Windows 终端配色：浅色 = CMD/VS Code 浅色风 */
+            case "windows-light":
+                return ""
+                        + "background=#ffffff\nforeground=#0a0a0a\ncursor=#0067c0\n"
+                        + "color0=#0a0a0a\ncolor1=#c50f1f\ncolor2=#13a10e\ncolor3=#c19c00\n"
+                        + "color4=#0037da\ncolor5=#881798\ncolor6=#3a96dd\ncolor7=#767676\n"
+                        + "color8=#595959\ncolor9=#e74856\ncolor10=#16c60c\ncolor11=#f9f1a5\n"
+                        + "color12=#3b78ff\ncolor13=#b4009e\ncolor14=#61d6d6\ncolor15=#000000\n";
+
+            /* ★ Windows 终端配色：深色 = Windows Terminal 默认深色（Campbell 变体） */
+            case "windows-dark":
+                return ""
+                        + "background=#0c0c0c\nforeground=#cccccc\ncursor=#4cc2ff\n"
+                        + "color0=#0c0c0c\ncolor1=#c50f1f\ncolor2=#13a10e\ncolor3=#c19c00\n"
+                        + "color4=#0037da\ncolor5=#881798\ncolor6=#3a96dd\ncolor7=#cccccc\n"
+                        + "color8=#767676\ncolor9=#e74856\ncolor10=#16c60c\ncolor11=#f9f1a5\n"
+                        + "color12=#3b78ff\ncolor13=#b4009e\ncolor14=#61d6d6\ncolor15=#f2f2f2\n";
+
+            /* ★ Windows XP 终端配色：经典 CMD 黑底白字 + XP 控制台默认 16 色 */
+            case "windows-xp":
+                return ""
+                        + "background=#000000\nforeground=#ffffff\ncursor=#ffffff\n"
+                        + "color0=#000000\ncolor1=#800000\ncolor2=#008000\ncolor3=#808000\n"
+                        + "color4=#000080\ncolor5=#800080\ncolor6=#008080\ncolor7=#c0c0c0\n"
+                        + "color8=#808080\ncolor9=#ff0000\ncolor10=#00ff00\ncolor11=#ffff00\n"
+                        + "color12=#0000ff\ncolor13=#ff00ff\ncolor14=#00ffff\ncolor15=#ffffff\n";
+
             default:
                 return null;
         }

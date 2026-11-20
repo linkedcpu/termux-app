@@ -27,8 +27,7 @@
                 android:id="@+id/terminal_view"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:layout_marginBottom="4dp"
-
+                android:layout_marginBottom="0dp"
                 android:defaultFocusHighlightEnabled="false"
                 android:focusableInTouchMode="true"
                 android:scrollbarThumbVertical="@drawable/terminal_scroll_shape"
@@ -47,54 +46,19 @@
                 android:layout_gravity="start" />
         </androidx.drawerlayout.widget.DrawerLayout>
 
+
+    </LinearLayout>
+
         <!-- ★ 扩展键栏：背景不写死，由 reloadActivityStyling() 套主题 -->
         <androidx.viewpager.widget.ViewPager
             android:id="@+id/terminal_toolbar_view_pager"
             android:layout_width="match_parent"
-            android:layout_height="38dp"
+            android:layout_height="20dp"
             android:visibility="gone" />
-
-    </LinearLayout>
-
-    <!-- ========== 底部栏：Session 标签在此，背景由 SessionTabBar.render() 套主题 ========== -->
-    <LinearLayout
+    <!-- ========== 底部栏：Session 标签，布局见 session_tab_bar.xml ========== -->
+    <include
         android:id="@+id/tab_bar_root"
-        android:layout_width="match_parent"
-        android:layout_height="32dp"
-        android:layout_marginVertical="4dp"
-        android:minHeight="32dp"
-        android:orientation="horizontal">
-
-        <HorizontalScrollView
-            android:id="@+id/tab_scroll_view"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="4"
-            android:scrollbars="none"
-            android:fillViewport="true">
-
-            <LinearLayout
-                android:id="@+id/tab_container"
-                android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:orientation="horizontal"
-                android:gravity="center_vertical" />
-        </HorizontalScrollView>
-
-        <!--
-            ★ ＋ / ☆ / ≡ 已拆到 session_action_bar.xml
-              由 SessionTabBar.installActionButtons() 绑定：
-              tab_add_button / snippet_button / drawer_menu_button
-              不着色写死，由 tint() 按 Theme.ACCENT / Theme.ICON 动态着色
-        -->
-        <include
-            android:id="@+id/action_group"
-            layout="@layout/session_action_bar"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1" />
-
-    </LinearLayout>
+        layout="@layout/session_tab_bar" />
 
     <!-- ========== 底部安全区占位 ========== -->
     <Space

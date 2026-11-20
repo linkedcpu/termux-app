@@ -8,7 +8,9 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.TypedValue;
 import android.view.HapticFeedbackConstants;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -17,6 +19,7 @@ import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.GridLayout;
 import android.widget.PopupWindow;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -49,6 +52,10 @@ import java.util.stream.Collectors;
  *
  * <p>★ 特殊键三态：普通 / 激活(短按) / 锁定(长按)。锁定态有独立配色
  * {@link SpecialButtonState#setLockedColors(int, int)}，且必定落地，不会因透明底色被跳过而"挂不上"。
+ *
+ * <p>★ FIX-FILL：按钮撑满格子的三要素 —— 两个轴都声明 FILL、height 不写死、minSize/inset 清零。
+ * <p>★ FIX-MARGIN：键间距由 Theme 决定，控件只执行；margin 与 FILL 可共存，无需改宽度算法。
+ * <p>★ FIX-AUTOSIZE：自动缩放必须在宽高确定之后开启，否则 popup / 首帧拿不到有效约束而失效。
  */
 public final class ExtraKeysView extends GridLayout {
 
@@ -86,6 +93,11 @@ public final class ExtraKeysView extends GridLayout {
     /** ★ FIX5: 锁定色相对激活色的加深量，用于主题未显式指定锁定色时自动派生 */
     private static final int LOCKED_COLOR_DARKEN_DELTA = 40;
 
+    /** ★ FIX-AUTOSIZE: 键帽自动缩放字号区间 */
+    private static final float AUTO_SIZE_MIN_SP = 3f;
+    private static final float AUTO_SIZE_MAX_SP = 14f;
+    private static final float AUTO_SIZE_STEP_SP = 1f;
+
 
     protected IExtraKeysView mExtraKeysViewClient;
 
@@ -109,6 +121,10 @@ public final class ExtraKeysView extends GridLayout {
     private boolean mPill = false;
     private int mStrokePx = 0;
     private int mOutlineColor = 0x00000000;
+
+    /* ★ FIX-MARGIN: 键间距状态，由 Theme / 调用方决定，控件只执行 */
+    private int mButtonMarginH = 1;
+    private int mButtonMarginV = 1;
 
     protected int mLongPressTimeout;
     protected int mLongPressRepeatDelay;
@@ -143,6 +159,8 @@ public final class ExtraKeysView extends GridLayout {
 
         // ★ 不裁剪，避免圆角被 GridLayout 边缘截断
         setClipToPadding(false);
+        // ★ FIX-FILL: GridLayout 自身不留内边距，否则整圈都会露底
+        setPadding(0, 0, 0, 0);
     }
 
 
@@ -209,6 +227,42 @@ public final class ExtraKeysView extends GridLayout {
     }
 
 
+    /* ========================================================= */
+    /* ★ FIX-MARGIN: 键间距访问入口                                */
+    /* ========================================================= */
+
+    public int getButtonMarginHp() { return mButtonMarginH; }
+    public int getButtonMarginVp() { return mButtonMarginV; }
+
+    /** dp → px 便捷换算 */
+    public int dp2px(float dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
+    }
+
+    /**
+     * 设置键间距（px）。会同步刷新已挂载按钮的 LayoutParams，无需 reload 即时生效。
+     */
+    public void setButtonMargins(int marginHp, int marginVp) {
+        mButtonMarginH = Math.max(0, marginHp);
+        mButtonMarginV = Math.max(0, marginVp);
+        for (int i = 0; i < getChildCount(); i++) {
+            View v = getChildAt(i);
+            if (!(v.getLayoutParams() instanceof GridLayout.LayoutParams)) continue;
+            GridLayout.LayoutParams lp = (GridLayout.LayoutParams) v.getLayoutParams();
+            lp.setMargins(mButtonMarginH, mButtonMarginV, mButtonMarginH, mButtonMarginV);
+            v.setLayoutParams(lp);
+        }
+    }
+
+    /** 同时设置容器内边距（px），想让整个键盘和屏幕边缘留白时用 */
+    public void setButtonMargins(int marginHp, int marginVp, boolean applyContainerPadding) {
+        setButtonMargins(marginHp, marginVp);
+        if (applyContainerPadding) {
+            setPadding(mButtonMarginH, mButtonMarginV, mButtonMarginH, mButtonMarginV);
+        }
+    }
+
+
     public int getLongPressTimeout() {
         return mLongPressTimeout;
     }
@@ -266,6 +320,18 @@ public final class ExtraKeysView extends GridLayout {
         }
 
         refreshButtonColors();
+    }
+
+    /** ★ FIX-MARGIN: 带间距的主题入口（重载，不破坏旧调用方） */
+    public void applyTheme(int textColor, int activeTextColor,
+                           int bgColor, int activeBgColor,
+                           float radiusPx, boolean pill,
+                           int strokePx, int outlineColor,
+                           int marginHp, int marginVp) {
+        mButtonMarginH = Math.max(0, marginHp);
+        mButtonMarginV = Math.max(0, marginVp);
+        applyTheme(textColor, activeTextColor, bgColor, activeBgColor,
+                   radiusPx, pill, strokePx, outlineColor);
     }
 
     /** ★ FIX5: 由激活底色派生锁定底色（加深一档）；透明则直接沿用激活色 */
@@ -352,6 +418,55 @@ public final class ExtraKeysView extends GridLayout {
     }
 
 
+    /* ========================================================= */
+    /* ★ FIX-FILL / FIX-AUTOSIZE: 按钮尺寸与字号归一化入口         */
+    /* ========================================================= */
+
+    /**
+     * 去掉 {@code buttonBarButtonStyle} 带来的默认最小尺寸 / inset / 文字折行，
+     * 否则按钮会被这些隐形占位顶出留白，撑不满 GridLayout 分给它的格子。
+     *
+     * <p>★ 注意：这里【不】开启自动缩放。自动缩放必须在宽高确定之后调用，
+     * 否则 popup / 首帧测量宽高为 0，TextView 拿不到有效约束而静默失效。
+     */
+    private static void normalizeButtonSize(@NonNull MaterialButton button) {
+        button.setPadding(0, 0, 0, 0);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            button.setPaddingRelative(0, 0, 0, 0);
+        }
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumWidth(0);
+        button.setMinimumHeight(0);
+        // ★ MaterialButton 1.3+ 的额外上下 inset，会吃掉高度
+        try {
+            button.setInsetTop(0);
+            button.setInsetBottom(0);
+        } catch (Throwable ignored) {
+            // 老版本 Material 无此方法，忽略
+        }
+        // button.setMaxLines(1);
+        // button.setSingleLine(true);
+    }
+
+    /**
+     * ★ FIX-AUTOSIZE: 开启 6~14sp 自动缩放。
+     * 必须在 setWidth/setHeight 之后、或 attach 完成后（post）调用才生效。
+     * 与手动 setTextSize 互斥，二者不可同时使用。
+     */
+    private static void applyAutoSize(@NonNull MaterialButton button) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            button.setAutoSizeTextTypeUniformWithConfiguration(
+                Math.round(AUTO_SIZE_MIN_SP),
+                Math.round(AUTO_SIZE_MAX_SP),
+                Math.round(AUTO_SIZE_STEP_SP),
+                TypedValue.COMPLEX_UNIT_SP);
+        } else {
+            button.setEllipsize(TextUtils.TruncateAt.END);
+        }
+    }
+
+
     @SuppressLint("ClickableViewAccessibility")
     public void reload(ExtraKeysInfo extraKeysInfo, float heightPx) {
         if (extraKeysInfo == null)
@@ -370,6 +485,19 @@ public final class ExtraKeysView extends GridLayout {
         setRowCount(buttons.length);
         setColumnCount(maximumLength(buttons));
 
+        // ★ FIX-FILL + FIX-MARGIN: 让 GridLayout 总高确定，rowSpec 的 FILL 才有空间可撑；
+        // 纵向 margin 会吃掉高度，这里补回来，保证每行净高仍等于 heightPx
+        if (heightPx > 0) {
+            int totalHeight = Math.round(heightPx * buttons.length)
+                            + mButtonMarginV * (buttons.length - 1);
+            ViewGroup.LayoutParams lp = getLayoutParams();
+            if (lp != null) {
+                lp.height = totalHeight;
+                setLayoutParams(lp);
+            }
+            setMinimumHeight(totalHeight);
+        }
+
         for (int row = 0; row < buttons.length; row++) {
             for (int col = 0; col < buttons[row].length; col++) {
                 final ExtraKeyButton buttonInfo = buttons[row][col];
@@ -386,7 +514,11 @@ public final class ExtraKeysView extends GridLayout {
                 button.setText(buttonInfo.getDisplay());
                 button.setTextColor(mButtonTextColor);
                 button.setAllCaps(mButtonTextAllCaps);
-                button.setPadding(0, 0, 0, 0);
+                // ★ FIX-FILL: 统一清掉默认最小尺寸 / inset / 折行
+                normalizeButtonSize(button);
+                // ★ FIX-AUTOSIZE: 先开一次；宽高要在 layout 后才有，故 post 里再兜一次
+                applyAutoSize(button);
+                button.post(() -> applyAutoSize(button));
                 // ★ 应用当前皮肤造型（圆角/描边/底色），不走 setBackground
                 styleKey(button, mButtonBackgroundColor, false, false);
 
@@ -436,7 +568,7 @@ public final class ExtraKeysView extends GridLayout {
                                 tintKey((MaterialButton) view, mButtonBackgroundColor, false, false);
                             }
                             stopScheduledExecutors();
-                            // ★ FIX4: 长按已消费本次按下，吞掉随后的 click，避免「锁上又立刻解锁」
+                            // ★ FIX4: 长按已消费本次按下，抬起时不再翻转
                             if (mLongPressTriggered) {
                                 mLongPressTriggered = false;
                                 return true;
@@ -458,16 +590,14 @@ public final class ExtraKeysView extends GridLayout {
                     }
                 });
 
+                // ★ FIX-FILL: 两个轴都声明 FILL —— 少一个轴，那个轴就按 wrap_content 排，留下空白
+                // ★ FIX-MARGIN: margin 与 FILL 可共存，按钮自动填满「格子减去 margin」的空间
                 LayoutParams param = new GridLayout.LayoutParams();
-                param.width = 0;
-                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.LOLLIPOP) {
-                    param.height = (int) (heightPx + 0.5);
-                } else {
-                    param.height = 0;
-                }
-                param.setMargins(0, 0, 0, 0);
-                param.columnSpec = GridLayout.spec(col, GridLayout.FILL, 1.f);
-                param.rowSpec = GridLayout.spec(row, GridLayout.FILL, 1.f);
+                param.columnSpec = GridLayout.spec(col, GridLayout.FILL, 1f);
+                param.rowSpec = GridLayout.spec(row, GridLayout.FILL, 1f);
+                param.width = 0;   // 配合 columnSpec 的 FILL+weight，由 GridLayout 分配宽度
+                param.height = 0;  // ★ 不要再钉死 heightPx，否则 rowSpec 的 FILL 无空间可拉伸
+                param.setMargins(mButtonMarginH, mButtonMarginV, mButtonMarginH, mButtonMarginV);
                 button.setLayoutParams(param);
 
                 addView(button);
@@ -592,21 +722,23 @@ public final class ExtraKeysView extends GridLayout {
         }
         button.setText(extraButton.getDisplay());
         button.setAllCaps(mButtonTextAllCaps);
-        button.setPadding(0, 0, 0, 0);
-        button.setMinHeight(0);
-        button.setMinWidth(0);
-        button.setMinimumWidth(0);
-        button.setMinimumHeight(0);
+        normalizeButtonSize(button);
+        // ★ FIX-AUTOSIZE: 先定尺寸，再开自动缩放 —— 顺序反了就不生效
         button.setWidth(width);
         button.setHeight(height);
+        applyAutoSize(button);
         styleKey(button, mButtonActiveBackgroundColor, true, false);
-        mPopupWindow = new PopupWindow(this);
-        mPopupWindow.setWidth(LayoutParams.WRAP_CONTENT);
-        mPopupWindow.setHeight(LayoutParams.WRAP_CONTENT);
-        mPopupWindow.setContentView(button);
+
+        // ★ 直接以 button 为 contentView，避免测量时把整个 ExtraKeysView 当参考系
+        mPopupWindow = new PopupWindow(button,
+                LayoutParams.WRAP_CONTENT,
+                LayoutParams.WRAP_CONTENT);
         mPopupWindow.setOutsideTouchable(true);
         mPopupWindow.setFocusable(false);
         mPopupWindow.showAsDropDown(view, 0, -2 * height);
+
+        // ★ 双保险：popup 完成布局后再触发一次缩放计算，此时按钮已有真实宽高
+        button.post(() -> applyAutoSize(button));
     }
 
     /** ★ OPT5: 判空后再 dismiss，避免 showPopup 提前返回时 NPE */
@@ -642,6 +774,9 @@ public final class ExtraKeysView extends GridLayout {
         if (state == null) return null;
         state.setIsCreated(true);
         MaterialButton button = new MaterialButton(getContext(), null, android.R.attr.buttonBarButtonStyle);
+        // ★ FIX-FILL: special 键也清掉默认最小尺寸/inset，否则它会把整行顶出留白
+        normalizeButtonSize(button);
+        applyAutoSize(button);   // ★ FIX-AUTOSIZE
         boolean active = state.getIsActive();
         boolean locked = state.getIsLocked();
         button.setTextColor(resolveTextColor(state, active, locked));
