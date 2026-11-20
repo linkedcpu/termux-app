@@ -13,7 +13,11 @@ public final class ThemeMotionPlayer {
         attach(v, t == null ? null : t.motion());
     }
 
-    /** 指定效果接入（临时覆盖单个控件） */
+    /**
+     * 指定效果接入（临时覆盖单个控件）。
+     * 覆盖式挂载：每次调用都会替换旧 listener，不判重——
+     * 因此换肤后重调 attach 即可让新皮肤的动效生效。
+     */
     public static void attach(final View v, final ThemeMotion m) {
         if (v == null) return;
         if (m == null || m.pressEffect == ThemeMotion.PressEffect.NONE || m.pressDurationMs <= 0) {
@@ -59,8 +63,38 @@ public final class ThemeMotionPlayer {
         });
     }
 
-    private static void press(View v, ThemeMotion m) {
+    /**
+     * ★ 供控件在重建 / 换肤 / 隐藏前主动归位动效属性。
+     * 典型用法：SessionTabBar.render() 重建 ＋/☆/≡ 之前调用，
+     * 避免正在播的 SPIN / SCALE 把 rotation、alpha 残留到新视图上。
+     */
+    public static void reset(View v) {
+        safeCancel(v);
+    }
+
+    /**
+     * ★ cancel 只中断播放、不回滚属性，这是「点 ＋ 动画卡在半路」的根因：
+     * rotationBy 被掐断时 rotation 停在中间角度（如 137°），
+     * scaleX / alpha 同理会停在 0.92 / 0.6。
+     * 且 cancel() 时 withEndAction 不保证执行，必须在同一次调用里同步归位，
+     * 不能依赖动画结束回调。
+     */
+    private static void safeCancel(View v) {
+        if (v == null) return;
         v.animate().cancel();
+        v.clearAnimation();
+        v.setRotation(0f);
+        v.setRotationX(0f);
+        v.setRotationY(0f);
+        v.setAlpha(1f);
+        v.setScaleX(1f);
+        v.setScaleY(1f);
+        v.setTranslationX(0f);
+        v.setTranslationY(0f);
+    }
+
+    private static void press(View v, ThemeMotion m) {
+        safeCancel(v);
         long d = m.pressDurationMs;
         switch (m.pressEffect) {
             case SCALE:
@@ -68,7 +102,9 @@ public final class ThemeMotionPlayer {
                         .scaleX(m.pressedScale).scaleY(m.pressedScale).start();
                 break;
             case JELLY:
-                float deep = m.pressedScale / m.jellyOvershoot;
+                // ★ 除零保护：jellyOvershoot 为 0 时 deep 会变 Infinity，按钮直接消失
+                float denom = (m.jellyOvershoot > 0.01f) ? m.jellyOvershoot : 1f;
+                float deep = m.pressedScale / denom;
                 v.animate().setDuration(d).scaleX(deep).scaleY(deep).start();
                 break;
             case STRETCH:
@@ -83,8 +119,11 @@ public final class ThemeMotionPlayer {
                         .translationY(m.bounceDip * Theme.density(v.getContext())).start();
                 break;
             case SPIN:
-                // ★ 按下只给一点缩小反馈，不转；真正的整圈在 release 里做
+                // ★ 按下只给一点缩小反馈，不转；真正的整圈在 release 里做。
+                //   起转前先归零 rotation + scale，双保险防止残留累积。
                 v.setRotation(0f);
+                v.setScaleX(1f);
+                v.setScaleY(1f);
                 v.animate().setDuration(d)
                         .scaleX(m.pressedScale).scaleY(m.pressedScale).start();
                 break;
@@ -96,7 +135,7 @@ public final class ThemeMotionPlayer {
     }
 
     private static void release(View v, ThemeMotion m) {
-        v.animate().cancel();
+        safeCancel(v);
         long d = m.pressDurationMs;
         switch (m.pressEffect) {
             case SCALE:

@@ -76,6 +76,9 @@ import com.termux.view.TerminalView;
  * <p>★★ ＋ / ☆ / ≡ 三个按钮的创建、绑定、着色已全部内聚到 SessionTabBar。
  * <p>★★ 收藏夹只挂抽屉（DrawerPanel.buildSnippetPage），本类不再拆装视图树、
  *    不再持有 mSnippetPanel、不再判断 isExpanded；只负责 new / save / 注入。
+ *
+ * <p>★★ Session 栏显隐持久化：落盘写在 SessionTabBar.setVisibleNow() 内部（单点落盘），
+ *    本类只负责「尊重偏好」——不再无条件 ensureVisible() 覆盖用户设置。
  */
 public final class TermuxActivity extends AppCompatActivity implements ServiceConnection {
 
@@ -175,6 +178,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                         (LinearLayout) findViewById(R.id.tab_container),
                         (LinearLayout) findViewById(R.id.action_group));
         mSessionTabBar.init();
+        // ★ Session 栏显隐在 SessionTabBar.init() 内部已读回偏好并 applyVisibility，
+        //   这里只做一次渲染对齐，不再无条件展开（否则会覆盖用户「隐藏」设置）
 
         mContextMenu =
                 new TerminalContextMenu(
@@ -199,6 +204,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
                             @Override
                             public void toggle() {
+                                // ★ 落盘在 SessionTabBar.setVisibleNow() 内部，此处无需再存
                                 if (mSessionTabBar != null) mSessionTabBar.toggle();
                             }
                         },
@@ -294,7 +300,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         TermuxCrashUtils.notifyAppCrashFromCrashLogFile(this, LOG_TAG);
         mIsOnResumeAfterOnCreate = false;
         if (mSessionTabBar != null) {
-            mSessionTabBar.ensureVisible();
+            // ★ 尊重持久化显隐偏好：用户隐藏过就不再自动展开
+            if (shouldShowSessionTabBar()) mSessionTabBar.ensureVisible();
             mSessionTabBar.render();
         }
         syncDrawerButtonHighlights();
@@ -388,7 +395,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
         mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
         if (mSessionTabBar != null) {
-            mSessionTabBar.ensureVisible();
+            // ★ 同 onResume：服务重连也不覆盖用户的隐藏偏好
+            if (shouldShowSessionTabBar()) mSessionTabBar.ensureVisible();
             mSessionTabBar.render();
         }
     }
@@ -397,6 +405,22 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public void onServiceDisconnected(ComponentName name) {
         Logger.logDebug(LOG_TAG, "onServiceDisconnected");
         finishActivityIfNotFinishing();
+    }
+
+    /* ========================================================= */
+    /* ★ Session 栏显隐偏好（与 SessionTabBar.KEY_VISIBLE 同 key） */
+    /* ========================================================= */
+
+    /** ★ Session 栏是否应显示；默认 true，老版本覆盖安装后不消失 */
+    public boolean shouldShowSessionTabBar() {
+        if (mPreferences == null) return true;
+        return mPreferences.shouldShowSessionTabBar();
+    }
+
+    /** ★ 供 SessionTabBar 之外需要统一改显隐的入口使用（会走 setVisibleNow 落盘） */
+    public boolean toggleSessionTabBar() {
+        if (mSessionTabBar == null) return false;
+        return mSessionTabBar.toggle();
     }
 
     /* ========================================================= */
@@ -437,14 +461,17 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     /** ★ 主题联动：抽屉 / 收藏夹 / 标签栏 / ☆ ≡ / 扩展键栏 一起刷新 */
-    private void applyThemeToUi() {
+        private void applyThemeToUi() {
         if (mDrawerPanel != null) mDrawerPanel.reloadTheme();
         // ★ 收藏夹常驻抽屉，不再判断 isExpanded()
         if (mSnippetMgr != null) mSnippetMgr.reloadTheme();
-        if (mSessionTabBar != null) mSessionTabBar.render();
+        // ★ 原来是 render()：只重排标签，不重取主题快照、不重挂动效，
+        //   导致 ＋/☆/≡ 三个按钮的按压效果停在旧皮肤
+        if (mSessionTabBar != null) mSessionTabBar.reloadTheme();
         applyThemeToExtraKeys();
         syncDrawerButtonHighlights();
     }
+
 
     /** 供 DrawerPanel 切主题后触发统一套色 */
     public void applyThemeToUiFromDrawer() {
@@ -832,11 +859,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                                 TermuxInstaller.setupStorageSymlinks(TermuxActivity.this);
                             } else if (callback) {
                                 Logger.logInfoAndShowToast(
-                                        TermuxActivity.this,
-                                        LOG_TAG,
-                                        getString(
-                                                com.termux.shared.R.string
-                                                        .msg_storage_permission_not_granted_on_request));
+                                            TermuxActivity.this,
+                                            LOG_TAG,
+                                            getString(
+                                                    com.termux.shared.R.string
+                                                            .msg_storage_permission_not_granted_on_request));
                             }
                         })
                 .start();
