@@ -725,7 +725,7 @@ public final class ExtraKeysView extends GridLayout {
         normalizeButtonSize(button);
         // ★ FIX-AUTOSIZE: 先定尺寸，再开自动缩放 —— 顺序反了就不生效
         button.setWidth(width);
-        button.setHeight(height);
+        button.setHeight(height*2);
         applyAutoSize(button);
         styleKey(button, mButtonActiveBackgroundColor, true, false);
 
@@ -735,7 +735,7 @@ public final class ExtraKeysView extends GridLayout {
                 LayoutParams.WRAP_CONTENT);
         mPopupWindow.setOutsideTouchable(true);
         mPopupWindow.setFocusable(false);
-        mPopupWindow.showAsDropDown(view, 0, -2 * height);
+        mPopupWindow.showAsDropDown(view, 0, -5 * height);
 
         // ★ 双保险：popup 完成布局后再触发一次缩放计算，此时按钮已有真实宽高
         button.post(() -> applyAutoSize(button));
