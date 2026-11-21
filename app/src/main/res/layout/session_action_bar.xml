@@ -14,7 +14,7 @@
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:scaleType="centerInside"
-        android:padding="6dp"
+        android:padding="2dp"
         android:src="@drawable/ic_new_session"
         android:contentDescription="@string/action_new_session"
         tools:ignore="ContentDescription" />
@@ -26,7 +26,7 @@
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:scaleType="centerInside"
-        android:padding="6dp"
+        android:padding="2dp"
         android:src="@drawable/ic_drawer_snippet"
         android:contentDescription="@string/action_snippets"
         tools:ignore="ContentDescription" />
@@ -38,7 +38,7 @@
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:scaleType="centerInside"
-        android:padding="6dp"
+        android:padding="2dp"
         android:src="@drawable/ic_drawer_more"
         android:contentDescription="@string/action_open_drawer"
         tools:ignore="ContentDescription" />
